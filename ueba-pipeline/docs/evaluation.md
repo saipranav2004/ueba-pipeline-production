@@ -161,6 +161,60 @@ rather than the SPN, and key directory operations on the operation class rather
 than the object. Admitting a new view is therefore an evidence-based decision
 rather than per-attack judgement.
 
+## What each relationship view contributes
+
+`scripts/ablate_graph_views.py` drops each view in turn and re-runs the whole
+benchmark, so a view is kept on measured contribution rather than on the
+plausibility of its rationale. Six seeds, same protocol as above.
+
+| view dropped | recall | Δ | FP/day | standalone recall |
+|---|---|---|---|---|
+| — (all views) | 43/60 | — | 3.46 | — |
+| `user_src` | 33/60 | **−10** | 3.65 | 34/60 |
+| `kerb_ctx` | 37/60 | **−6** | 3.56 | 6/60 |
+| `tgs_enc` | 41/60 | −2 | 3.48 | 7/60 |
+| `proc_access` | 43/60 | 0 | 3.46 | 4/60 |
+| `rare_proc` | 43/60 | 0 | 3.46 | 0/60 |
+| `dir_op` | 45/60 | +2 | 3.42 | — |
+| `src_dst` | 48/60 | **+5** | 3.39 | 29/60 |
+
+Combined: dropping `src_dst` alone reaches 48/60 at 3.39; dropping `dir_op` or
+`rare_proc` on top of that changes nothing; dropping `proc_access` as well costs
+2, so `proc_access` does contribute once `src_dst` is no longer masking it.
+
+**`user_src` carries the product.** It is the only view that is both essential
+(−10 when dropped) and strong alone (34/60). Everything else is supporting
+evidence.
+
+**Two mechanisms make a view net-negative, and they are different problems.**
+
+- *Evidence starvation.* `dir_op` sees ~22 benign directory operations in the
+  calibration slice, so its null floors at `1/(n+1) ≈ 0.043`. It can never assert
+  significance — but it still adds a test to the Šidák correction in every cell
+  where a directory event lands, diluting the views that can. This is the same
+  evidence limit that leaves account manipulation at 0/5, now visible as a cost
+  rather than merely an absence. A longer baseline resolves it; deleting the view
+  would instead make directory attacks structurally undetectable.
+- *Redundancy plus displacement.* `src_dst` is well-evidenced (~329 edges) and
+  individually capable (29/60), but it derives from the same 4624 events as
+  `user_src` and is strongly correlated with it. Under a fixed alert budget its
+  moderate p-values displace `user_src`'s stronger ones.
+
+**`src_dst` is nevertheless retained, and the reason matters.** The estate's
+`server_access` is a fixed per-department list, so host-to-host edges are close to
+deterministic by construction — precisely the dimension this view measures. That
+is a known property of the fixture, not of real networks, and it is exactly the
+kind of artifact that makes a simulator result untrustworthy. The published
+evidence points the other way: Bowman et al. (RAID 2020) report ~0.85 TPR at 0.9%
+FPR on **real** LANL data using source-computer → destination-computer edges as
+the primary lateral-movement signal. Removing the canonical real-data view on the
+strength of a fixture whose bias sits in that same dimension would be the
+circularity this project exists to avoid.
+
+The finding is therefore recorded, not acted on. `AuthGraphConfig.enabled_views`
+lets a deployment disable any view, and this decision should be re-made on a
+corpus with realistic host-to-host variety — see [datasets.md](datasets.md).
+
 ## Scalability
 
 Measured on 253 employees × 20 days (~160k events): fit ~30k events/s, score ~37k
