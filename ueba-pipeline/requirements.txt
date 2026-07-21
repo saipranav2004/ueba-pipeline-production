@@ -1,0 +1,13 @@
+# Runtime dependencies.
+
+numpy==2.4.4
+scipy>=1.11,<2            # scipy.stats: skew (ECOD), chi2/norm (p-value combiners)
+pydantic==2.13.4
+PyYAML==6.0.3
+networkx==3.6.1          # identity graph (analyst tooling); NOT on the detection path
+
+# -- optional, feature-gated. Guarded at the import site; the core engine runs without them.
+confluent-kafka>=2.5,<3  # ingestion/source.py KafkaEventSource
+neo4j>=5.0,<6            # graph/memgraph_backend.py (Bolt), only when backend="memgraph"
+msal>=1.28,<2            # connectors/entra_signin.py -- OAuth for Microsoft Graph
+requests>=2.31,<3        # connectors/entra_signin.py

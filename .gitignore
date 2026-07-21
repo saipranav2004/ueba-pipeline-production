@@ -1,0 +1,87 @@
+# ── Generated telemetry and experiment artifacts ────────────────────────────
+# Everything here is reproducible from a documented command and is far too large
+# to version (multi-GB). Regenerate with:
+#   python enterprise_simulator/run_simulation.py ...   -> simulator output
+#   python scripts/run_model_benchmark.py              -> benchmark artifacts
+#   python scripts/validate_on_otrf.py                 -> OTRF dataset cache
+artifacts/
+**/enterprise_simulator/output/
+
+# Trained model bundles. Signed, environment-specific, and rebuilt by `train`.
+*.pkl
+*.sig
+engine.json
+
+# Downloaded third-party datasets (OTRF/Mordor archives, LANL exports).
+*.evtx
+auth.txt
+redteam.txt
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing / coverage / type checking
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# The engine requires UEBA__SECURITY__MODEL_SIGNING_KEY; it must never be
+# committed. Keep local values in a .env that stays untracked.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yml
+secrets.yaml
+
+# ── Editors / OS ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

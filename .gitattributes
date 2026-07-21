@@ -1,0 +1,26 @@
+# Normalise line endings so the repository is byte-identical across platforms.
+# Without this, Windows checkouts commit CRLF and every diff on a Unix CI shows
+# the whole file as changed.
+* text=auto eol=lf
+
+# Explicitly text, regardless of heuristics.
+*.py      text eol=lf
+*.md      text eol=lf
+*.txt     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.jsonl   text eol=lf
+*.cfg     text eol=lf
+*.toml    text eol=lf
+Dockerfile text eol=lf
+
+# Binary: never diff, never touch line endings.
+*.pdf     binary
+*.png     binary
+*.jpg     binary
+*.zip     binary
+*.gz      binary
+*.evtx    binary
+*.npy     binary
+*.pkl     binary

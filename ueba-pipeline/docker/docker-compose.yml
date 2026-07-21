@@ -1,0 +1,110 @@
+# UNVERIFIED — see docker/Dockerfile header. `docker compose up` has not
+# been run against this file in this environment (no Docker daemon
+# available here — confirmed, not assumed).
+#
+# The Kafka service is included because the task requires designing for
+# real-time ingestion from the start, per ARCHITECTURE.md §10 and
+# ingestion/source.py's KafkaEventSource. That consumer is fully
+# implemented (confluent-kafka, manual-commit at-least-once, EOF-aware
+# batch/replay mode) and exercised end-to-end against a trained bundle via
+# the `score-stream` CLI. What remains genuinely infra-blocked is measuring
+# throughput/latency/back-pressure and confirming at-least-once semantics
+# under load against a LIVE broker: the detection logic is broker-
+# independent and validated, but no Kafka cluster is reachable in the build
+# sandbox. Standing the broker up here means that validation can run the
+# moment a real environment is available, with no further code work.
+#
+# Kafka image/config follows the current (2026) documented pattern for
+# single-node KRaft mode (no ZooKeeper) using the official apache/kafka
+# image — verified against multiple independent 2025/2026 sources during
+# Phase 1 research, not copied from a single blog post.
+
+services:
+  ueba-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ueba-pipeline:phase1
+    volumes:
+      - model-artifacts:/app/artifacts
+      - ../enterprise_simulator/output:/app/data:ro
+    environment:
+      - UEBA__MODEL_STORE_PATH=/app/artifacts/models
+    depends_on:
+      kafka:
+        condition: service_healthy
+    # No default long-running command yet — this image is a CLI
+    # (`train`/`score`), not a daemon. A real-time scoring daemon is a
+    # Phase 2+ deliverable once KafkaEventSource is implemented; until
+    # then this service is invoked via `docker compose run ueba-pipeline
+    # train --data-dir /app/data --roster /app/data/roster.json`.
+    command: ["--help"]
+
+  kafka:
+    # SECURITY (AUDIT finding #7): these listeners are PLAINTEXT and this
+    # file is the LOCAL DEV loop ONLY -- it must never carry real identity/
+    # security telemetry on an untrusted network. For any shared or
+    # production broker use docker-compose.prod.yml (SASL_SSL + mTLS).
+    image: apache/kafka:latest
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # Scale-out graph backend (identity_graph.backend = "memgraph"). Optional in
+  # the same sense Kafka is: file/NetworkX paths need none of this. Included so
+  # the Memgraph backend (graph/memgraph_backend.py, neo4j Bolt driver + MAGE
+  # PageRank / community_detection / betweenness) can be validated end-to-end
+  # against a real engine the moment this env is available. Image/ports/
+  # healthcheck follow Memgraph's current (2026) documented single-node MAGE
+  # pattern: memgraph/memgraph-mage on Bolt 7687 (+ 7444 for Lab log streaming),
+  # readiness probed with a trivial Cypher round-trip via mgconsole.
+  #
+  # SECURITY: this dev instance runs with no auth (blank MEMGRAPH_USER) and is
+  # for the LOCAL loop only. A shared/production Memgraph must set
+  # MEMGRAPH_USER/MEMGRAPH_PASSWORD (the backend reads memgraph_user/
+  # memgraph_password from config, the latter a masked SecretStr) and terminate
+  # Bolt over TLS. To point the pipeline at this service, set
+  # UEBA__IDENTITY_GRAPH__BACKEND=memgraph and
+  # UEBA__IDENTITY_GRAPH__MEMGRAPH_URI=bolt://memgraph:7687.
+  memgraph:
+    image: memgraph/memgraph-mage:latest
+    hostname: memgraph
+    ports:
+      - "7687:7687"
+      - "7444:7444"
+    command: ["--log-level=TRACE"]
+    volumes:
+      - memgraph-data:/var/lib/memgraph
+      - memgraph-log:/var/log/memgraph
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'RETURN 0;' | mgconsole || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  model-artifacts:
+  kafka-data:
+  memgraph-data:
+  memgraph-log:

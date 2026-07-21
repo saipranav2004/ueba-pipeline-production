@@ -1,0 +1,90 @@
+# UNVERIFIED / structural placeholder — not applied against a real cluster
+# (no Kubernetes environment available in this sandbox). Included because
+# ML_DESIGN_DECISIONS.md §2 establishes a daily HBOS retrain cadence and
+# ARCHITECTURE.md §10 anticipates horizontal per-user sharding for RCF —
+# a CronJob is the natural k8s primitive for "batch retrain on a schedule,"
+# so this is written to be a concrete starting point, not empty scaffolding.
+#
+# Known gaps that need resolving before this is deployable, listed rather
+# than hidden:
+# - No container registry reference — `image:` below is a placeholder tag,
+#   not a real, pushed image (this project has never run `docker build`,
+#   let alone pushed anywhere — see docker/Dockerfile header).
+# - No resource requests/limits tuned against real memory usage. RCF forest
+#   memory footprint at production headcount was not measured in this
+#   phase (only 253 synthetic users were tested).
+# - Data source mount (`data-volume` below) assumes a shared filesystem or
+#   pre-populated PVC; the real ingestion path for a live deployment is
+#   Kafka (once KafkaEventSource is implemented), not a mounted directory
+#   of JSONL files. This manifest matches today's FileEventSource reality,
+#   not the target streaming architecture.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ueba-daily-retrain
+  labels:
+    app: ueba-pipeline
+    component: training
+spec:
+  schedule: "0 2 * * *"  # 02:00 daily — matches HBOSConfig retrain cadence
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ueba-train
+              image: ueba-pipeline:phase1  # placeholder — not a real registry ref
+              command: ["python3", "-m", "ueba_pipeline.cli.main", "train"]
+              args:
+                - "--data-dir=/data"
+                - "--roster=/data/roster.json"
+              env:
+                # AUDIT finding #7: inject the model signing key. Without it,
+                # ModelStore(require_signed_bundles=True) raises on first run and
+                # the job never persists a bundle. Provisioned from an external
+                # vault via External Secrets Operator -- see
+                # secret-signing-key.example.yaml.
+                - name: UEBA__SECURITY__MODEL_SIGNING_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ueba-signing-key
+                      key: model-signing-key
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: "2Gi"
+                limits:
+                  cpu: "4"
+                  memory: "4Gi"
+              volumeMounts:
+                - name: data-volume
+                  mountPath: /data
+                  readOnly: true
+                - name: model-artifacts
+                  mountPath: /app/artifacts
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: data-volume
+              persistentVolumeClaim:
+                claimName: ueba-ingested-data  # not defined anywhere yet
+            - name: model-artifacts
+              persistentVolumeClaim:
+                claimName: ueba-model-artifacts
+            - name: tmp
+              emptyDir: {}  # not defined anywhere yet

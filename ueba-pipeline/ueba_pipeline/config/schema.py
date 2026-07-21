@@ -1,0 +1,340 @@
+"""
+config/schema.py -- Externalized, validated configuration for the UEBA pipeline.
+
+Environment override syntax: UEBA__SECTION__FIELD=value (double underscore
+throughout -- both after the UEBA prefix and between nesting levels), e.g.
+UEBA__THRESHOLD__PERCENTILE=99.9. A single-underscore variant (UEBA_SECTION__FIELD)
+is a common typo and is explicitly detected and rejected at load time rather
+than silently ignored, since an operator who thinks they overrode a value
+and didn't is worse than a load-time error.
+
+Fails fast: invalid values raise at load time, not at first use deep in a
+training run hours later.
+"""
+
+from __future__ import annotations
+
+import os
+import warnings
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+
+class _StrictModel(BaseModel):
+    """Base for every config section. `extra="forbid"` makes the module
+    docstring's "fails fast" claim actually true: Pydantic v2's own default
+    is `extra="ignore"`, which silently drops unrecognized keys (a typo'd
+    YAML field name would load without error and just use the default,
+    invisibly). Verified via regression test that this now raises."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WindowConfig(_StrictModel):
+    """Time-window discipline shared by feature engineering and both scorers."""
+
+    feature_window_hours: float = Field(default=1.0, gt=0)
+
+
+class CapabilityConfig(_StrictModel):
+    """Controls the bootstrap scan that builds the CapabilityManifest --
+    the mechanism that keeps the pipeline correct when a log source
+    (Sysmon, DNS analytical logging, PowerShell script-block logging, etc.)
+    is absent from a given deployment."""
+
+    bootstrap_min_events: int = Field(
+        default=200,
+        description="Minimum total events in the bootstrap scan before a "
+                    "capability manifest is considered trustworthy.",
+    )
+    min_events_for_capability: int = Field(
+        default=5, ge=1,
+        description="A feature group's events must number at least this many in "
+                    "the bootstrap window before the group is enabled. An "
+                    "ABSOLUTE floor, deliberately not a fraction of total "
+                    "events. A fraction-of-total gate has two failures that an "
+                    "absolute floor does not: (1) it couples unrelated sources "
+                    "-- a high-volume source (Sysmon, DNS) inflates the "
+                    "denominator and can push a legitimately-present but "
+                    "lower-volume source (Kerberos, failed logons) below the "
+                    "bar, so two independent log sources gate each other; and "
+                    "(2) it is unstable on a small or rolling training window -- "
+                    "the fraction of any event type varies run to run, flipping "
+                    "a group on and off between retrains from sampling noise "
+                    "alone, and every flip changes the feature order and "
+                    "needlessly invalidates the model. An absolute floor is "
+                    "independent per source and stable across window sizes, "
+                    "while still rejecting a single stray event left over from a "
+                    "decommissioned pilot install. Does NOT apply to "
+                    "presence_gated_groups below.",
+    )
+    presence_gated_groups: List[str] = Field(
+        default_factory=lambda: [
+            "defender", "privilege_ad", "account_lifecycle",
+        ],
+        description="Groups admitted on ANY nonzero count in the bootstrap "
+                    "window, bypassing min_events_for_capability. Their signal "
+                    "is rare BY DESIGN, so even a small absolute floor is the "
+                    "wrong test: Windows Defender only fires on an actual "
+                    "malware verdict, and DCSync / privileged-group changes are "
+                    "inherently sporadic. Measured on a real 5-day, "
+                    "253-employee run, Defender produced 2 events out of 55,996 "
+                    "total -- a healthy environment would rarely reach even a "
+                    "handful, so gating these on volume defeats the point of "
+                    "having the feature. account_lifecycle (T1098 privileged "
+                    "group additions) carries the identical property: a 35-day, "
+                    "272-user clean run's only account_lifecycle signal was a "
+                    "single injected attack instance. These groups are the "
+                    "special case where the presence of the event IS the "
+                    "signal, so they admit on the first occurrence.",
+    )
+    zero_variance_check_enabled: bool = True
+
+
+class DepartmentBehaviorConfig(_StrictModel):
+    """Per-department behavioral parameters for the simulator. Defaults are
+    plausible starting points, not validated facts -- override per
+    deployment/scenario rather than trusting them as ground truth."""
+
+    remote_fraction: float = Field(ge=0, le=1)
+    login_start_mean_ist: float = Field(ge=0, le=23.99)
+    login_start_std: float = Field(gt=0)
+    work_duration_mean_hours: float = Field(gt=0)
+    work_duration_std: float = Field(gt=0)
+    ps_scripts_per_week: float = Field(ge=0)
+
+
+class SimulatorConfig(_StrictModel):
+    """External override surface for the simulator's department-level
+    behavioral parameters and enabled log sources."""
+
+    departments: Dict[str, DepartmentBehaviorConfig] = Field(default_factory=dict)
+    enabled_log_sources: List[str] = Field(
+        default_factory=lambda: [
+            "security", "sysmon", "dns", "powershell", "task_scheduler",
+            "wmi", "defender",
+        ],
+    )
+
+    @field_validator("enabled_log_sources")
+    @classmethod
+    def _valid_sources(cls, v: List[str]) -> List[str]:
+        allowed = {"security", "sysmon", "dns", "powershell", "task_scheduler",
+                   "wmi", "defender"}
+        bad = set(v) - allowed
+        if bad:
+            raise ValueError(f"unknown log source(s) in enabled_log_sources: {bad}")
+        return v
+
+
+class SecurityConfig(_StrictModel):
+    """Model-bundle integrity. Persisted bundles are pickled Python objects;
+    pickle.load executes arbitrary embedded code, so bundles moving between
+    machines (e.g. via S3Backend) must be signed and verified, not loaded on
+    trust alone."""
+
+    # SecretStr + repr=False: the signing key is the single most sensitive
+    # secret in the system -- anyone who learns it can forge valid bundle
+    # signatures and thereby get arbitrary code execution via pickle.load on
+    # the next model load. It must never reach a log, error tracker, repr, or
+    # serialized support bundle. Read via .get_secret_value().
+    model_signing_key: Optional[SecretStr] = Field(
+        default=None, repr=False,
+        description="HMAC key for signing/verifying persisted model bundles. "
+                    "Must be set via UEBA__SECURITY__MODEL_SIGNING_KEY (or "
+                    "YAML, though an environment secret is strongly "
+                    "preferred) in any environment that saves or loads "
+                    "models. No default is provided on purpose -- a "
+                    "hardcoded default key would defeat the point. Masked in "
+                    "repr/dump.",
+    )
+    require_signed_bundles: bool = Field(
+        default=True,
+        description="If True, persistence/store.py refuses to load an "
+                    "unsigned or invalidly-signed bundle. Disable only for "
+                    "local development against artifacts you produced "
+                    "yourself in the same session.",
+    )
+
+
+class IdpConnectorConfig(_StrictModel):
+    """Configuration for the Entra ID sign-in connector (the cloud face of a
+    hybrid AD estate). Third-party IDPs are out of scope for this AD-focused
+    pipeline."""
+
+    source_name: str = Field(default="entra_id",
+                             description="Identity source. Only 'entra_id' is supported.")
+    enabled: bool = True
+    tenant_id: Optional[str] = None
+    client_id: Optional[str] = None
+    # SecretStr masks the value in repr/str/model_dump; read via
+    # .get_secret_value(). Prevents leaking credentials to logs, error trackers,
+    # or a serialized support bundle.
+    client_secret: Optional[SecretStr] = Field(default=None, repr=False)
+
+    @field_validator("source_name")
+    @classmethod
+    def _valid_source(cls, v: str) -> str:
+        if v != "entra_id":
+            raise ValueError(f"source_name must be 'entra_id', got '{v}'")
+        return v
+
+    _REQUIRED_FIELDS: Dict[str, List[str]] = {
+        "entra_id": ["tenant_id", "client_id", "client_secret"],
+    }
+
+    def build_connector(self):
+        """Instantiate the Entra connector from this config, validating that all
+        required fields are set first so a missing credential produces a clear
+        error instead of a TypeError from the connector's __init__."""
+        from ueba_pipeline.connectors import CONNECTOR_REGISTRY
+        cls = CONNECTOR_REGISTRY.get(self.source_name)
+        if cls is None:
+            raise ValueError(f"no connector registered for source_name='{self.source_name}'")
+
+        required = self._REQUIRED_FIELDS.get(self.source_name, [])
+        missing = [f for f in required if getattr(self, f) is None]
+        if missing:
+            raise ValueError(
+                f"source_name='{self.source_name}' requires fields "
+                f"{missing} to be set in the config — all are currently None."
+            )
+
+        return cls(
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret.get_secret_value()
+            if self.client_secret is not None else None,
+        )
+
+
+class IdentityGraphConfig(_StrictModel):
+    """Configuration for the structural identity graph.
+
+    Consumed only by the `graph-viz` command and the Memgraph backend. Nothing
+    here affects detection: no code path fuses structural risk into a behavioural
+    score. See graph/identity_graph.py.
+    """
+
+    backend: str = Field(
+        default="networkx",
+        description="Graph compute backend. 'networkx' (default) is validated "
+                    "for this project's scale (< a few thousand nodes, snapshot "
+                    "recompute < 1s). 'memgraph' is the documented scale-out "
+                    "path for larger graphs or streaming edge maintenance "
+                    "(see graph/backend.py).",
+    )
+    memgraph_uri: str = Field(
+        default="bolt://localhost:7687",
+        description="Bolt URI for the Memgraph instance (backend='memgraph').",
+    )
+    memgraph_user: str = Field(default="", description="Memgraph username (blank = no auth).")
+    memgraph_password: SecretStr = Field(
+        default=SecretStr(""), repr=False,
+        description="Memgraph password; masked in repr/dump.",
+    )
+    tier0_risk_weight: float = Field(
+        default=0.40, ge=0, le=1,
+        description="Weight for Tier-0 proximity in composite risk score.",
+    )
+    betweenness_weight: float = Field(
+        default=0.25, ge=0, le=1,
+        description="Weight for betweenness centrality in composite risk score.",
+    )
+    pagerank_weight: float = Field(
+        default=0.20, ge=0, le=1,
+        description="Weight for PageRank in composite risk score.",
+    )
+    degree_weight: float = Field(
+        default=0.15, ge=0, le=1,
+        description="Weight for degree centrality in composite risk score.",
+    )
+    betweenness_exact_max_nodes: int = Field(
+        default=1500, ge=1,
+        description="Above this node count, betweenness centrality is estimated "
+                    "from sampled pivots (Brandes & Pich 2007) instead of exact "
+                    "Brandes O(V*E), which is unusable past ~10k nodes.",
+    )
+    betweenness_pivots: int = Field(
+        default=300, ge=1,
+        description="Number of source pivots for sampled betweenness on large "
+                    "graphs. Higher = more accurate, slower.",
+    )
+    @model_validator(mode="after")
+    def _weights_plausible(self) -> "IdentityGraphConfig":
+        total = self.tier0_risk_weight + self.betweenness_weight + self.pagerank_weight + self.degree_weight
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"graph risk weights must sum to 1.0, got {total}")
+        return self
+
+
+class PipelineConfig(_StrictModel):
+    window: WindowConfig = Field(default_factory=WindowConfig)
+    capability: CapabilityConfig = Field(default_factory=CapabilityConfig)
+    simulator: SimulatorConfig = Field(default_factory=SimulatorConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    idp_connectors: List[IdpConnectorConfig] = Field(default_factory=list)
+    identity_graph: IdentityGraphConfig = Field(default_factory=IdentityGraphConfig)
+    random_seed: int = 20250106
+    model_store_path: str = "artifacts/models"
+
+
+def _apply_env_overrides(raw: dict) -> dict:
+    """
+    Env-var override support: UEBA__SECTION__FIELD=value. Also detects the
+    single-underscore near-miss (UEBA_SECTION__FIELD) and warns loudly
+    rather than silently ignoring it -- a wrong-but-plausible env var name
+    that gets silently dropped is worse than one that fails visibly.
+    """
+    prefix = "UEBA__"
+    near_miss_prefix = "UEBA_"
+
+    for key in os.environ:
+        if key.startswith(near_miss_prefix) and not key.startswith(prefix):
+            warnings.warn(
+                f"Environment variable '{key}' looks like a UEBA config "
+                f"override but uses a single underscore after UEBA_. The "
+                f"correct syntax is double-underscore throughout: "
+                f"'UEBA__SECTION__FIELD'. This variable will be IGNORED.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    for key, val in os.environ.items():
+        if not key.startswith(prefix):
+            continue
+        path = key[len(prefix):].lower().split("__")
+        node = raw
+        for part in path[:-1]:
+            node = node.setdefault(part, {})
+        coerced: object = val
+        for cast in (int, float):
+            try:
+                coerced = cast(val)
+                break
+            except ValueError:
+                continue
+        if val.lower() in ("true", "false"):
+            coerced = val.lower() == "true"
+        node[path[-1]] = coerced
+    return raw
+
+
+def load_config(path: Optional[str | Path] = None) -> PipelineConfig:
+    """
+    Loads config from YAML (if provided) + environment overrides, validates,
+    and fails fast with a clear pydantic ValidationError on bad input rather
+    than propagating a bad value into training.
+    """
+    raw: dict = {}
+    if path is not None:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"config file not found: {path}")
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+    raw = _apply_env_overrides(raw)
+    return PipelineConfig(**raw)
