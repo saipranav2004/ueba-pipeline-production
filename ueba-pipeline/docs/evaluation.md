@@ -224,14 +224,84 @@ reaches 13/60 alone at only 0.71 FP/day, and it is the only view reading directo
 operations. A longer baseline resolves the floor; deleting the view would make
 directory attacks permanently invisible.
 
+## Parameter sensitivity
+
+`scripts/sweep_hyperparameters.py` moves each free parameter across its plausible
+range and re-runs the whole benchmark. This reports sensitivity, not a tuned
+optimum: selecting the value that maximises recall on the estates the headline is
+quoted from would be selection on the test set, and the resulting figure would
+restate the search rather than measure the model.
+
+| parameter | range swept | spread | reading |
+|---|---|---|---|
+| `alpha` | 0.1 → 10 | 4 detections | flat from 0.1 to 1.0, degrading above 2.0 |
+| `absorb_surprise` | 6 → ∞ (no cap) | **0** | no measurable effect, even disabled |
+| `tick_seconds` | 900 → 21600 | **0** | no measurable effect |
+| `null_calibration_fraction` | 0.15 → 0.40 | **9 detections** | genuinely load bearing |
+
+**Three of the four parameters do not matter, which is the useful result.** The
+Dirichlet concentration is flat across an order of magnitude below its default, so
+`alpha = 1.0` sits on a plateau rather than a peak and needs no defence beyond
+being uninformative. The non-absorption threshold and the burst-term time
+resolution change nothing at all — see the note on the burst term below.
+
+**`null_calibration_fraction` is the exception and deserves care.** At 0.15 the
+held-out slice is too small to give the nulls resolution and recall falls to
+44/60; at 0.40 it reaches 53/60. The default of 0.30 is *not* the best value
+measured here, and it is deliberately not moved to 0.40 on that basis: these are
+the estates the headline is quoted from, so tuning against them would make the
+headline a restatement of the sweep. Choosing this parameter properly requires a
+validation estate held apart from the reported one.
+
 ## Scalability
 
-Measured on 253 employees × 20 days (~160k events): fit ~30k events/s, score ~37k
-events/s, signed bundle ~440 KB, `score()` bit-for-bit reproducible across
-repeated calls. Updates are O(1) per edge and the artifact is bounded by grid
-size, not by how much data was seen. Nothing above ~300 entities has been
-measured — linear-in-events fit and O(1) counter updates predict it holds, which
-is a prediction, not a measurement.
+Measured with `scripts/benchmark_performance.py`, generating estates at 1×, 2×,
+4× and 8× headcount via the simulator's `--headcount-scale`.
+
+| identities | events | fit ev/s | score ev/s | fit MiB | p50 µs | p99 µs | distinct edges | bundle KiB |
+|---|---|---|---|---|---|---|---|---|
+| 265 | 70,246 | 30,990 | 60,771 | 0.9 | 4.0 | 71.7 | 1,004 | 202 |
+| 518 | 137,712 | 24,718 | 76,378 | 1.9 | 4.7 | 98.7 | 1,984 | 394 |
+| 1,024 | 275,394 | 32,280 | 104,601 | 3.5 | 3.4 | 99.2 | 3,848 | 764 |
+| 2,036 | 544,323 | 31,206 | 91,735 | 7.5 | 4.9 | 102.7 | 7,693 | 1,526 |
+
+**Edge count grows linearly with identities, not quadratically.** 7.7× the
+identities produces 7.7× the edges. The feared O(users × destinations) blow-up
+does not occur, because each identity has a bounded working set rather than
+reaching everything. Memory and bundle size follow the same linear curve.
+
+**Throughput and latency are flat.** Fit holds ~25–32k events/s and scoring
+60–105k events/s across the whole range; per-event streaming latency stays at
+~4 µs median and ~100 µs at the 99th percentile regardless of estate size. Nothing
+in the scoring path is a function of how many identities exist.
+
+Extrapolating the measured linear fit: 10,000 identities implies roughly 38k
+edges and ~37 MiB of detector state; 100,000 implies ~370 MiB and a ~75 MB
+bundle. Both remain tractable, and count-min sketching (MIDAS's mechanism) is the
+documented fallback if exact counters ever stop being.
+
+### Recall under a fixed analyst budget declines as the estate grows
+
+This is a property of budget-based alerting, not of the model, and it is the more
+important operational finding:
+
+| estate | identities | budget/day | recall | FP/day |
+|---|---|---|---|---|
+| 1× | 265 | 5 | 10/10 | 3.77 |
+| 2× | 518 | 5 | 9/10 | 3.90 |
+| 2× | 518 | 9.8 (scaled) | **10/10** | 8.55 |
+| 4× | 1,024 | 5 | 8/10 | 4.02 |
+| 4× | 1,024 | 19.3 (scaled) | **10/10** | 17.99 |
+
+At a fixed five alerts a day, four times the identities compete for the same five
+queue slots and two true positives fall below the cut. Scaling the budget with the
+estate recovers full recall, which shows the ranking itself is size-invariant: the
+false-positive *rate per identity* stays near 0.015/day across the whole range.
+
+The operational consequence is a capacity question, not a tuning one. Holding
+recall constant as an estate grows costs analyst time proportionally; holding
+analyst time constant costs recall. The engine surfaces the trade-off rather than
+hiding it.
 
 ## Validation against public data
 

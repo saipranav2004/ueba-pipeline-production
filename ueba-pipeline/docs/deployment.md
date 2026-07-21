@@ -86,21 +86,45 @@ a deployment decision, but two things force it:
   has changed materially since the last fit will produce novelty that is
   organisational, not adversarial.
 
-## Scaling
+## Performance and scaling
 
-Updates are O(1) per edge and the persisted artifact is bounded by grid size,
-not by how much data was seen — a bundle is ~440 KB regardless of training
-volume, and holds no copy of the telemetry.
+Measured with `scripts/benchmark_performance.py` over estates generated at 1×
+through 8× headcount. Full table in [evaluation.md](evaluation.md).
 
-Measured on 253 employees over 20 days (~160k events): fit ~30k events/s, score
-~37k events/s. **Nothing above roughly 300 identities has been measured.** The
-per-edge counters are exact, so the number of *distinct* edges — not the event
-rate — is the quantity that grows with estate size. If that becomes the
-constraint, count-min sketching (as MIDAS uses) swaps in behind the same
+| identities | fit ev/s | score ev/s | detector state | p50 / p99 latency | bundle |
+|---|---|---|---|---|---|
+| 265 | 30,990 | 60,771 | 0.9 MiB | 4.0 / 71.7 µs | 202 KiB |
+| 1,024 | 32,280 | 104,601 | 3.5 MiB | 3.4 / 99.2 µs | 764 KiB |
+| 2,036 | 31,206 | 91,735 | 7.5 MiB | 4.9 / 102.7 µs | 1,526 KiB |
+
+**Capacity planning.** State grows linearly with identities, not quadratically:
+7.7× the identities produced 7.7× the distinct edges, because each identity has a
+bounded working set. Extrapolating the measured fit, 10,000 identities implies
+roughly 37 MiB of detector state and 100,000 implies ~370 MiB. Throughput and
+per-event latency are flat across the whole measured range — nothing in the
+scoring path depends on how many identities exist. If exact counters ever become
+the constraint, count-min sketching (MIDAS's mechanism) swaps in behind the same
 interface at the cost of collision noise.
+
+**The alert budget must be sized against the estate.** At a fixed five alerts a
+day, recall fell from 10/10 to 8/10 as the estate grew from 265 to 1,024
+identities: the same queue has to cover four times as many entities. Scaling the
+budget with the estate restored full recall, and the false-positive rate per
+identity stayed near 0.015/day throughout, so the ranking itself is
+size-invariant. Budget is therefore a capacity decision — holding recall as an
+estate grows costs analyst time proportionally.
 
 The identity graph is recomputed on a rolling snapshot rather than per event, so
 it only has to finish inside the retrain window.
+
+## Tuning
+
+Three of the four free parameters were measured to have no effect worth tuning
+(`alpha` is flat below its default; `absorb_surprise` and `tick_seconds` show no
+measurable effect at all). `null_calibration_fraction` does matter — 0.15 costs
+seven detections against the default 0.30 — and should be selected on a
+validation estate held apart from whatever estate performance is reported on.
+See [evaluation.md](evaluation.md).
 
 ## Operating the alert queue
 

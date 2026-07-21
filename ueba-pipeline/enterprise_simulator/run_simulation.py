@@ -770,7 +770,20 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default=None,
                         help="Path to YAML config file with simulator "
                              "department overrides (UEBA__SIMULATOR__DEPARTMENTS__*)")
+    parser.add_argument("--headcount-scale", type=float, default=1.0,
+                        help="Multiply every department's headcount by this "
+                             "factor. Generates a larger or smaller estate from "
+                             "the same profiles, which is how identity-scaling "
+                             "behaviour is measured (scripts/"
+                             "benchmark_performance.py).")
     args = parser.parse_args()
+
+    if args.headcount_scale != 1.0:
+        for dept in DEPARTMENTS.values():
+            dept.headcount = max(1, int(round(dept.headcount * args.headcount_scale)))
+        total = sum(d.headcount for d in DEPARTMENTS.values())
+        if not args.quiet:
+            print(f"  headcount scaled by {args.headcount_scale}x -> {total} employees")
 
     # Load config overrides if a config file is provided
     config_overrides_dict: dict | None = None
