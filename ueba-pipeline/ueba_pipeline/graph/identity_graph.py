@@ -298,34 +298,6 @@ class IdentityGraph:
                         self.add_edge(group_id, fs.lower(), EDGE_CAN_ACCESS,
                                       relationship="file_share_read")
 
-    def load_from_canonical_events(self, events: list) -> None:
-        """Load identity relationships from CanonicalIdentityEvent objects.
-
-        This is the multi-IDP path — events from Entra/Okta/Ping/Google
-        carry identity relationships (group membership, role assignments)
-        that feed into the structural graph.
-        """
-        for event in events:
-            if event is None:
-                continue
-            user = event.user
-            if not user:
-                continue
-            # Ensure user node exists
-            if user not in self.graph:
-                self.add_node(user, NODE_USER, source_idp=event.source)
-            # Extract group/role relationships from event fields
-            fields = event.fields or {}
-            groups = fields.get("groups") or []
-            if isinstance(groups, str):
-                groups = [groups]
-            for group in groups:
-                group_id = f"idp_{event.source}_{group}"
-                if group_id not in self.graph:
-                    self.add_node(group_id, NODE_GROUP, name=group,
-                                  source_idp=event.source)
-                self.add_edge(user, group_id, EDGE_MEMBER_OF)
-
     def compute_risk_scores(self) -> GraphRiskReport:
         """Compute graph-based structural risk scores for all entities.
 

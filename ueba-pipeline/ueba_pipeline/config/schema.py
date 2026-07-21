@@ -161,57 +161,6 @@ class SecurityConfig(_StrictModel):
     )
 
 
-class IdpConnectorConfig(_StrictModel):
-    """Configuration for the Entra ID sign-in connector (the cloud face of a
-    hybrid AD estate). Third-party IDPs are out of scope for this AD-focused
-    pipeline."""
-
-    source_name: str = Field(default="entra_id",
-                             description="Identity source. Only 'entra_id' is supported.")
-    enabled: bool = True
-    tenant_id: Optional[str] = None
-    client_id: Optional[str] = None
-    # SecretStr masks the value in repr/str/model_dump; read via
-    # .get_secret_value(). Prevents leaking credentials to logs, error trackers,
-    # or a serialized support bundle.
-    client_secret: Optional[SecretStr] = Field(default=None, repr=False)
-
-    @field_validator("source_name")
-    @classmethod
-    def _valid_source(cls, v: str) -> str:
-        if v != "entra_id":
-            raise ValueError(f"source_name must be 'entra_id', got '{v}'")
-        return v
-
-    _REQUIRED_FIELDS: Dict[str, List[str]] = {
-        "entra_id": ["tenant_id", "client_id", "client_secret"],
-    }
-
-    def build_connector(self):
-        """Instantiate the Entra connector from this config, validating that all
-        required fields are set first so a missing credential produces a clear
-        error instead of a TypeError from the connector's __init__."""
-        from ueba_pipeline.connectors import CONNECTOR_REGISTRY
-        cls = CONNECTOR_REGISTRY.get(self.source_name)
-        if cls is None:
-            raise ValueError(f"no connector registered for source_name='{self.source_name}'")
-
-        required = self._REQUIRED_FIELDS.get(self.source_name, [])
-        missing = [f for f in required if getattr(self, f) is None]
-        if missing:
-            raise ValueError(
-                f"source_name='{self.source_name}' requires fields "
-                f"{missing} to be set in the config — all are currently None."
-            )
-
-        return cls(
-            tenant_id=self.tenant_id,
-            client_id=self.client_id,
-            client_secret=self.client_secret.get_secret_value()
-            if self.client_secret is not None else None,
-        )
-
-
 class IdentityGraphConfig(_StrictModel):
     """Configuration for the structural identity graph.
 
@@ -262,7 +211,6 @@ class PipelineConfig(_StrictModel):
     capability: CapabilityConfig = Field(default_factory=CapabilityConfig)
     simulator: SimulatorConfig = Field(default_factory=SimulatorConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
-    idp_connectors: List[IdpConnectorConfig] = Field(default_factory=list)
     identity_graph: IdentityGraphConfig = Field(default_factory=IdentityGraphConfig)
     random_seed: int = 20250106
     model_store_path: str = "artifacts/models"
