@@ -1,4 +1,4 @@
-"""Evaluation — one implementation, driving the shipped TwoTrackEngine.
+"""Evaluation — one implementation, driving the shipped BehavioralEngine.
 
 `honest_eval` is the causal out-of-time harness (see BENCHMARK.md for the
 guarantees it enforces). `benchmark` and `lanl_adapter` support validation on

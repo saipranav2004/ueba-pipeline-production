@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from ueba_pipeline.config.schema import CapabilityConfig
-from ueba_pipeline.engine import EngineConfig, TwoTrackEngine
+from ueba_pipeline.engine import EngineConfig, BehavioralEngine
 from ueba_pipeline.parsing.normalize import NormalizedEvent
 
 SIGNING_KEY = "0" * 64
@@ -40,7 +40,7 @@ def _event(event_type, minute, group, **fields):
 
 
 def _synthetic_estate():
-    """A small estate exercising several graph views and the volumetric track."""
+    """A small estate exercising several relationship views."""
     events = []
     for day in range(6):
         for hour in range(3):
@@ -61,22 +61,20 @@ def _synthetic_estate():
     return events
 
 
-def _train_engine(enable_volumetric: bool) -> TwoTrackEngine:
-    engine = TwoTrackEngine(config=EngineConfig(
-        enable_volumetric=enable_volumetric, null_calibration_fraction=0.3))
+def _train_engine() -> BehavioralEngine:
+    engine = BehavioralEngine(config=EngineConfig(null_calibration_fraction=0.3))
     engine.fit(_synthetic_estate(), config_capability=CapabilityConfig(bootstrap_min_events=1))
     return engine
 
 
-@pytest.mark.parametrize("enable_volumetric", [False, True])
-def test_save_load_scores_are_bit_identical(tmp_path, enable_volumetric):
-    engine = _train_engine(enable_volumetric)
+def test_save_load_scores_are_bit_identical(tmp_path):
+    engine = _train_engine()
     test_events = _synthetic_estate()
 
     _, before = engine.score(test_events)
     engine.save(str(tmp_path / "bundle"))
-    reloaded = TwoTrackEngine.load(str(tmp_path / "bundle"))
-    _, after = engine_and_reload_scores(reloaded, test_events)
+    reloaded = BehavioralEngine.load(str(tmp_path / "bundle"))
+    _, after = reloaded.score(test_events)
 
     p_before = sorted((r.entity, r.p_value) for r in before)
     p_after = sorted((r.entity, r.p_value) for r in after)
@@ -84,13 +82,9 @@ def test_save_load_scores_are_bit_identical(tmp_path, enable_volumetric):
     assert np.allclose([p for _, p in p_before], [p for _, p in p_after], atol=0.0, rtol=0.0)
 
 
-def engine_and_reload_scores(engine, events):
-    return engine.score(events)
-
-
 def test_bundle_contains_no_pickle(tmp_path):
     """The format's whole point: nothing on disk is a pickle."""
-    engine = _train_engine(enable_volumetric=True)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
@@ -101,11 +95,11 @@ def test_bundle_contains_no_pickle(tmp_path):
     # The JSON must parse as plain data — no object hooks, no code.
     state = json.loads((bundle / "engine.json").read_text(encoding="utf-8"))
     assert state["serialization_version"]
-    assert "graph" in state and "volumetric" in state
+    assert "graph" in state and "graph_nulls" in state
 
 
 def test_tampered_state_is_rejected(tmp_path):
-    engine = _train_engine(enable_volumetric=False)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
@@ -115,11 +109,11 @@ def test_tampered_state_is_rejected(tmp_path):
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
     with pytest.raises(ValueError, match="signature verification failed"):
-        TwoTrackEngine.load(str(bundle))
+        BehavioralEngine.load(str(bundle))
 
 
 def test_tampered_array_is_rejected(tmp_path):
-    engine = _train_engine(enable_volumetric=False)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
@@ -129,17 +123,17 @@ def test_tampered_array_is_rejected(tmp_path):
     npy.write_bytes(bytes(raw))
 
     with pytest.raises(ValueError, match="signature verification failed"):
-        TwoTrackEngine.load(str(bundle))
+        BehavioralEngine.load(str(bundle))
 
 
 def test_wrong_signing_key_is_rejected(tmp_path, monkeypatch):
-    engine = _train_engine(enable_volumetric=False)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
     monkeypatch.setenv("UEBA__SECURITY__MODEL_SIGNING_KEY", "f" * 64)
     with pytest.raises(ValueError, match="signature verification failed"):
-        TwoTrackEngine.load(str(bundle))
+        BehavioralEngine.load(str(bundle))
 
 
 def test_load_rejects_object_bearing_npy(tmp_path):
@@ -149,7 +143,7 @@ def test_load_rejects_object_bearing_npy(tmp_path):
     file structurally (allow_pickle=False), so even a correctly signed bundle
     cannot smuggle an object through the array loader.
     """
-    engine = _train_engine(enable_volumetric=False)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
@@ -163,11 +157,11 @@ def test_load_rejects_object_bearing_npy(tmp_path):
     (bundle / _SIG_NAME).write_bytes(_bundle_signature(files))
 
     with pytest.raises(ValueError):
-        TwoTrackEngine.load(str(bundle))
+        BehavioralEngine.load(str(bundle))
 
 
 def test_version_mismatch_is_rejected(tmp_path):
-    engine = _train_engine(enable_volumetric=False)
+    engine = _train_engine()
     bundle = tmp_path / "bundle"
     engine.save(str(bundle))
 
@@ -182,4 +176,4 @@ def test_version_mismatch_is_rejected(tmp_path):
     (bundle / _SIG_NAME).write_bytes(_bundle_signature(files))
 
     with pytest.raises(ValueError, match="serialization version"):
-        TwoTrackEngine.load(str(bundle))
+        BehavioralEngine.load(str(bundle))

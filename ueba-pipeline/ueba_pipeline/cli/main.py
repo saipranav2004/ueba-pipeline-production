@@ -20,7 +20,7 @@ import sys
 
 from ueba_pipeline.config import load_config
 from ueba_pipeline.ingestion import FileEventSource
-from ueba_pipeline.engine import TwoTrackEngine, EngineConfig, is_graph_event
+from ueba_pipeline.engine import BehavioralEngine, EngineConfig, is_graph_event
 
 
 def _read_events(data_dir: str):
@@ -49,7 +49,7 @@ def cmd_train(args: argparse.Namespace) -> None:
             if is_graph_event(ev.event_type) and any(s <= ev.event_time <= x for s, x in spans)
         }
 
-    engine = TwoTrackEngine(config=EngineConfig(window_hours=cfg.window.feature_window_hours))
+    engine = BehavioralEngine(config=EngineConfig(window_hours=cfg.window.feature_window_hours))
     engine.fit(events, config_capability=cfg.capability, contaminated=contaminated)
     engine.save(args.model_dir)
     print(f"[train] fit on {len(events)} events -> signed bundle at {args.model_dir}", file=sys.stderr)
@@ -61,7 +61,7 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_score(args: argparse.Namespace) -> None:
-    engine = TwoTrackEngine.load(args.model_dir)
+    engine = BehavioralEngine.load(args.model_dir)
     if getattr(args, "alert_budget_per_day", None) is not None:
         engine.config.alert_budget_per_day = args.alert_budget_per_day
     events = _read_events(args.data_dir)
@@ -76,8 +76,7 @@ def cmd_score(args: argparse.Namespace) -> None:
     for r in alerts:
         top = r.top_hour.isoformat() if r.top_hour else "-"
         print(f"  {r.p_value:10.3e}  {r.entity:28s}  "
-              f"graph={r.graph_hits:<3d} vol={r.volumetric_hits:<3d} "
-              f"windows={r.n_windows:<4d} {top}")
+              f"hits={r.graph_hits:<4d} windows={r.n_windows:<4d} {top}")
 
 
 def cmd_score_stream(args: argparse.Namespace) -> None:
@@ -88,7 +87,7 @@ def cmd_score_stream(args: argparse.Namespace) -> None:
     each (entity, hour) window finalises past the watermark. Batch ``score`` is
     the reproducible path; this one trades reproducibility for adaptation.
     """
-    engine = TwoTrackEngine.load(args.model_dir)
+    engine = BehavioralEngine.load(args.model_dir)
     events = _read_events(args.data_dir)
     n = 0
     print(f"  {'p-value':>10s}  {'entity':28s}  hour", file=sys.stderr)
@@ -110,7 +109,7 @@ def cmd_drift(args: argparse.Namespace) -> None:
     from ueba_pipeline.features import build_capability_manifest
     from ueba_pipeline.monitoring.drift import detect_capability_drift
 
-    engine = TwoTrackEngine.load(args.model_dir)
+    engine = BehavioralEngine.load(args.model_dir)
     cfg = load_config()
     live = build_capability_manifest(_read_events(args.data_dir), cfg.capability)
     report = detect_capability_drift(engine.manifest, live)

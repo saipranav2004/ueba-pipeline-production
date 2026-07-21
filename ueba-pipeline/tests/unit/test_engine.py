@@ -1,4 +1,4 @@
-"""Tests for the two-track detection engine: fusion, rollup, signed persistence."""
+"""Tests for the detection engine: cell significance, rollup, signed persistence."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,7 @@ from ueba_pipeline.models.pvalue import EmpiricalPValue
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ueba_pipeline.engine import (
-    TwoTrackEngine,
+    BehavioralEngine,
     EngineConfig,
     WindowDetection,
     is_graph_event,
@@ -34,12 +34,11 @@ def test_is_graph_event_matches_exactly_not_by_prefix():
     for t in ("sysmon_11", "sysmon_12", "sysmon_3", "4672", "4104", "46240"):
         assert not is_graph_event(t), f"{t} must not be routed to the graph track"
 
-def test_window_detection_cell_p_is_tippett_combined():
-    """noisy-OR of two uncalibrated scores is gone; the cell p is Tippett
-    (most-significant track, Sidak-corrected) over calibrated p-values, so a
-    single severe track dominates and correlated tracks cannot gang up
-    (BENCHMARK.md)."""
-    d = WindowDetection("u", datetime(2025, 1, 1), graph_p=1e-4, volumetric_p=0.5, n_graph_tests=1)
+def test_window_detection_cell_p_is_tippett_corrected():
+    """The cell p is Tippett (min-p, Sidak-corrected for the number of tests over
+    calibrated p-values), so one severe test dominates and many mild tests cannot
+    gang up. See docs/evaluation.md."""
+    d = WindowDetection("u", datetime(2025, 1, 1), graph_p=1e-4, n_graph_tests=1)
     assert 0.0 < d.p < 1e-3          # one severe test dominates
     assert d.risk == pytest.approx(1.0 - d.p)
     quiet = WindowDetection("u", datetime(2025, 1, 1))
@@ -59,7 +58,7 @@ def test_rollup_is_sidak_corrected_not_accumulating():
     """The old rollup accumulated: enough mild hours always crossed 0.85. The
     new one takes the most significant hour and corrects for how many were
     tested, so more observation cannot manufacture significance."""
-    eng = TwoTrackEngine()
+    eng = BehavioralEngine()
     mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4, n_graph_tests=1)
             for h in range(24)]
     risks = eng._rollup(mild, observed_days=1.0)
@@ -67,7 +66,7 @@ def test_rollup_is_sidak_corrected_not_accumulating():
 
 
 def test_alerts_respect_the_analyst_budget():
-    eng = TwoTrackEngine(config=EngineConfig(alert_mode="budget", alert_budget_per_day=2.0))
+    eng = BehavioralEngine(config=EngineConfig(alert_mode="budget", alert_budget_per_day=2.0))
     ds = [WindowDetection(f"u{i}", datetime(2025, 1, 1, 1), graph_p=10.0 ** -(11 - i), n_graph_tests=1)
           for i in range(10)]
     risks = eng._rollup(ds, observed_days=1.0)
@@ -80,16 +79,16 @@ def test_save_load_roundtrip_preserves_config(tmp_path):
     # test_serialization.py; here we only confirm the engine's save/load wiring
     # reaches the non-executable serializer and restores declared config.
     from ueba_pipeline.config.schema import CapabilityConfig
-    eng = TwoTrackEngine(config=EngineConfig(alert_budget_per_day=7.0))
+    eng = BehavioralEngine(config=EngineConfig(alert_budget_per_day=7.0))
     eng.fit([], config_capability=CapabilityConfig(bootstrap_min_events=1))
     eng.save(str(tmp_path))
-    loaded = TwoTrackEngine.load(str(tmp_path))
+    loaded = BehavioralEngine.load(str(tmp_path))
     assert loaded.config.alert_budget_per_day == 7.0
 
 
 def test_load_rejects_tampered_bundle(tmp_path):
     from ueba_pipeline.config.schema import CapabilityConfig
-    eng = TwoTrackEngine()
+    eng = BehavioralEngine()
     eng.fit([], config_capability=CapabilityConfig(bootstrap_min_events=1))
     eng.save(str(tmp_path))
     state = tmp_path / "engine.json"
@@ -97,19 +96,18 @@ def test_load_rejects_tampered_bundle(tmp_path):
     data[-2] ^= 0xFF  # flip a byte inside the JSON
     state.write_bytes(bytes(data))
     with pytest.raises(ValueError):
-        TwoTrackEngine.load(str(tmp_path))
+        BehavioralEngine.load(str(tmp_path))
 
 
-def test_score_stream_finalizes_windows_by_watermark():
-    # A minimal engine whose graph fires on any lsass access; verify the stream
-    # yields the graph detection and drains buffered hours at end-of-stream.
+def test_score_stream_emits_detections_and_stays_pure_in_batch():
+    # A minimal engine that fires on a novel lsass access; verify the stream
+    # emits the detection, and that batch scoring remains pure.
     from ueba_pipeline.engine import EngineConfig
 
-    eng = TwoTrackEngine(config=EngineConfig(stream_watermark_hours=0.0))
+    eng = BehavioralEngine(config=EngineConfig())
     # Establish a benign baseline so the attack edge is novel. Surprise is
     # evidence-relative: with no baseline nothing is surprising.
     base = [_sysmon10("wininit.exe", "lsass.exe", minute=m) for m in range(0, 600, 60)]
-    eng.volumetric.feature_order = ["f_x"]  # trivial vol model is not exercised here
     # Build the baseline and calibrate the per-view nulls exactly as fit() does.
     eng._fit_graph(base)
     stream = [_sysmon10("rundll32.exe", "lsass.exe", minute=700)]
@@ -118,7 +116,7 @@ def test_score_stream_finalizes_windows_by_watermark():
 
     # score_stream adapts (absorb=True) while score() must not -- verify the
     # asymmetry that replaced the old always-mutating default.
-    eng2 = TwoTrackEngine(config=EngineConfig())
+    eng2 = BehavioralEngine(config=EngineConfig())
     eng2._fit_graph(base)
     probe = _sysmon10("rundll32.exe", "lsass.exe", minute=700)
     first = eng2.graph.score_event(probe, absorb=False)
@@ -160,7 +158,7 @@ def test_per_view_calibration_contains_a_churny_view():
 def test_fit_calibrates_one_null_per_graph_view():
     """The engine must hold a separate frozen null per graph view, not one pooled
     null, so each relationship type is scored against its own baseline."""
-    eng = TwoTrackEngine(config=EngineConfig())
+    eng = BehavioralEngine(config=EngineConfig())
     base = ([_sysmon10("wininit.exe", "lsass.exe", minute=m) for m in range(0, 600, 30)])
     eng._fit_graph(base)
     assert "proc_access" in eng._graph_nulls

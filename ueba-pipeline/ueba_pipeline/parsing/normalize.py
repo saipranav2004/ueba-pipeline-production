@@ -129,6 +129,20 @@ def normalize_username(username: Optional[str]) -> Optional[str]:
     return name
 
 
+def entity_key(value: Any) -> str:
+    """Stable lookup key for an entity -- an account or a host -- in the model.
+
+    Deliberately more permissive than :func:`normalize_username`, which returns
+    ``None`` for machine and system accounts because they are excluded from the
+    *user* behavioural baseline. The engine keys detections on hosts and machine
+    accounts as well, so this variant always returns a string. A UPN suffix is
+    stripped so ``alice@corp.local`` and ``alice`` resolve to one entity.
+    """
+    if value is None:
+        return ""
+    return str(value).strip().lower().split("@")[0]
+
+
 def hex_to_int(value: Optional[str]) -> Optional[int]:
     if value is None or value in NULL_VALUES:
         return None

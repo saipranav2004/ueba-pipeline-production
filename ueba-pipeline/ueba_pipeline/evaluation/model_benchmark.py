@@ -75,7 +75,7 @@ from ueba_pipeline.config.schema import load_config
 from ueba_pipeline.features import build_capability_manifest, build_user_windows
 from ueba_pipeline.features.contract import contract_hash, model_feature_names
 from ueba_pipeline.ingestion.source import FileEventSource
-from ueba_pipeline.models.volumetric_detector import _norm
+from ueba_pipeline.parsing.normalize import entity_key as _norm
 
 # Tolerance around a labelled attack span, matching the engine's own evaluation
 # harness so both report against the same notion of "during the attack".
@@ -154,7 +154,7 @@ def graph_reference_scores(data_dir: str, data: WindowDataset,
     the same train/test division.
     """
     try:
-        from ueba_pipeline.engine import EngineConfig, TwoTrackEngine, _floor_hour
+        from ueba_pipeline.engine import EngineConfig, BehavioralEngine, _floor_hour
     except Exception:
         return None
 
@@ -170,7 +170,7 @@ def graph_reference_scores(data_dir: str, data: WindowDataset,
         return None
 
     config = load_config()
-    engine = TwoTrackEngine(config=EngineConfig(
+    engine = BehavioralEngine(config=EngineConfig(
         window_hours=config.window.feature_window_hours))
     engine.fit(train, config_capability=config.capability)
     detections, _ = engine.score(test)

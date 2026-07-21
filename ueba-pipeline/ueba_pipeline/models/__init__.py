@@ -1,3 +1,1 @@
-from ueba_pipeline.models.volumetric_detector import VolumetricDetector
-
-__all__ = ["VolumetricDetector"]
+"""Statistical primitives: calibrated p-values and p-value combiners."""

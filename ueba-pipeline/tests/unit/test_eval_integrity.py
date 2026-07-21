@@ -11,9 +11,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ueba_pipeline.engine import EngineConfig, TwoTrackEngine
+from ueba_pipeline.engine import EngineConfig, BehavioralEngine
 from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphConfig
-from ueba_pipeline.models.inductive_ecod import InductiveECOD
 
 
 # --- BUG: the alerting path was dead by construction -------------------------
@@ -42,53 +41,7 @@ def test_absorb_threshold_is_reachable():
     assert cfg.absorb_surprise > 0, "absorb threshold must exist in surprise units"
 
 
-def test_volumetric_scores_are_batch_independent():
-    """pyod's ECOD concatenates X_train onto every scoring batch, so a window's
-    score depended on which other windows shared its batch (measured drift:
-    193.95 score units). score() and score_stream() could not agree.
-    """
-    rng = np.random.default_rng(0)
-    X = rng.normal(size=(500, 8))
-    m = InductiveECOD().fit(X)
-    probe = rng.normal(size=(20, 8))
 
-    alone = np.array([m.decision_function(probe[i : i + 1])[0] for i in range(len(probe))])
-    batched = m.decision_function(probe)
-    assert np.allclose(alone, batched), "scoring must not depend on batch composition"
-
-    # order-independence too
-    perm = rng.permutation(len(probe))
-    assert np.allclose(m.decision_function(probe[perm]), batched[perm])
-
-
-def test_model_artifact_does_not_embed_training_data():
-    """61.3 MB of a 61.8 MB signed bundle was ECOD's retained X_train + O/U
-    matrices: the artifact was a verbatim copy of the estate's behavioural
-    feature matrix, and grew without bound with the training set.
-    """
-    rng = np.random.default_rng(0)
-    d, grid = 8, 4096
-    a = InductiveECOD(grid_size=grid).fit(rng.normal(size=(20_000, d)))
-    b = InductiveECOD(grid_size=grid).fit(rng.normal(size=(200_000, d)))
-    # 10x the training data must not grow the artifact at all.
-    assert a.state_bytes == b.state_bytes, (
-        f"fitted state must be bounded by grid size, not training-set size "
-        f"({a.state_bytes} vs {b.state_bytes})"
-    )
-    assert b.state_bytes <= d * grid * 8 + 1024
-    assert not hasattr(b, "X_train"), "must not retain raw training rows"
-
-
-def test_threshold_is_calibrated_on_the_frozen_ecdf_not_a_doubled_one():
-    """fit() calibrated its threshold via score_many(train_windows), which under
-    pyod scored concat(X_train, X_train) -- a doubled distribution no live batch
-    ever sees. Confirmed: ECOD's O matrix was (26514, 64) = 2 x 13257.
-    """
-    rng = np.random.default_rng(0)
-    X = rng.normal(size=(1000, 6))
-    m = InductiveECOD().fit(X)
-    assert len(m.decision_scores_) == len(X)
-    assert np.allclose(m.decision_scores_, m.decision_function(X))
 
 
 # --- BUG: threshold leakage --------------------------------------------------
@@ -98,10 +51,10 @@ def test_engine_calibrates_nulls_on_training_data_only():
     nulls must be frozen at fit time and score() must never recalibrate or see
     labels."""
     import inspect
-    fit_src = inspect.getsource(TwoTrackEngine.fit) + inspect.getsource(TwoTrackEngine._fit_graph)
-    assert "_vol_null" in fit_src and "_graph_nulls" in fit_src
-    score_src = inspect.getsource(TwoTrackEngine.score)
-    for leak in ("label", "attack", "EmpiricalPValue().fit", "_vol_null =", "_graph_nulls ="):
+    fit_src = inspect.getsource(BehavioralEngine.fit) + inspect.getsource(BehavioralEngine._fit_graph)
+    assert "_graph_nulls" in fit_src
+    score_src = inspect.getsource(BehavioralEngine.score)
+    for leak in ("label", "attack", "EmpiricalPValue().fit", "_graph_nulls ="):
         assert leak not in score_src, f"score() must not recalibrate or see labels ({leak!r})"
 
 
@@ -110,8 +63,8 @@ def test_score_is_pure():
     events gave different answers (measured 31 -> 30 -> 30) and a re-run after a
     crash under-reported the attack it was re-run to catch."""
     import inspect
-    assert "absorb=False" in inspect.getsource(TwoTrackEngine.score)
-    assert hasattr(TwoTrackEngine, "observe"), "online adaptation must be an explicit call"
+    assert "absorb=False" in inspect.getsource(BehavioralEngine.score)
+    assert hasattr(BehavioralEngine, "observe"), "online adaptation must be an explicit call"
 
 
 
@@ -132,7 +85,7 @@ def test_attack_attribution_requires_the_alerts_peak_hour():
 
     from ueba_pipeline.evaluation import honest_eval
 
-    src = inspect.getsource(honest_eval._evaluate_track)
+    src = inspect.getsource(honest_eval._evaluate_detections)
     assert "peak_hour" in src, "attribution must key on the alert's peak hour"
     assert "hours_by_entity" not in src, "the vacuous any-detection-in-window check must stay gone"
 
@@ -148,9 +101,9 @@ def test_graph_and_volumetric_share_one_entity_space():
     took the mismatch from 252 to 0.
     """
     from ueba_pipeline.graph.sessions import SessionResolver
-    from ueba_pipeline.engine import TwoTrackEngine
+    from ueba_pipeline.engine import BehavioralEngine
 
-    eng = TwoTrackEngine()
+    eng = BehavioralEngine()
     host_event = SimpleNamespace(
         event_type="sysmon_10", event_time=datetime(2025, 1, 1, 10, tzinfo=timezone.utc),
         computer_name="ws01", fields={},

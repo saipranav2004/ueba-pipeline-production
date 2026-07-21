@@ -1,47 +1,51 @@
-"""Two-track behavioral detection engine -- the production detection path.
+"""Behavioral detection engine -- the production detection path.
 
 ARCHITECTURE
 ------------
-Two complementary detectors, each emitting a **calibrated p-value** against a
-frozen benign null:
+One detector (:class:`AuthGraphAnomalyDetector`) emitting a **calibrated
+p-value** against a frozen benign null. It scores relational anomalies -- lateral
+movement, credential-forgery reuse, credential-store access, rare process
+novelty, ticket downgrade, and directory-object change -- per event, as
+Dirichlet-smoothed edge surprise across several independently calibrated
+relationship views.
 
-  * graph track (:class:`AuthGraphAnomalyDetector`) -- relational anomalies:
-    lateral movement, credential-forgery reuse, credential-store access, rare
-    process novelty, ticket downgrade, and directory-object change. Scored per
-    event as Dirichlet-smoothed edge surprise. This is the workhorse: on the
-    honest all-technique benchmark it carries the product (43/60 = 71.7% recall
-    at 3.46 false-positive entities/day, 6 seeds, contamination=none; reproduce
-    with `walk-forward-eval`). See BENCHMARK.md.
-  * volumetric track (:class:`VolumetricDetector`) -- per-entity ECOD over
-    behavioral counts, for volume-shift anomalies (mass request bursts, and the
-    exfiltration/insider-volume threats a relational view cannot see). Batch-fit,
-    stream-scored per completed window.
+Measured on the honest all-technique benchmark: 43/60 = 71.7% recall at 3.46
+false-positive entities/day (6 seeds, contamination=none). Reproduce with
+`walk-forward-eval`; see docs/evaluation.md.
 
-A THIRD "peer" track (Poisson matrix factorization over the user x resource
-matrix) was removed: on the honest all-technique benchmark it added no technique
-the graph track did not already catch, it is CORRELATED with the volumetric
-track (both are functions of the same access counts), and its rate matrix is
-dense O(users x dests) -- a ~2 GB bundle at enterprise scale. It underperformed
-even on a simulator whose deterministic per-department access is biased in its
-favour. See BENCHMARK.md and AUDIT_FINDINGS.md.
+WHY ONE DETECTOR
+----------------
+Two supplementary tracks were evaluated against this one and both were removed on
+measured evidence, not preference:
 
-Every raw score is mapped through :class:`EmpiricalPValue` (frozen ECDF of the
-*training* benign distribution) before combination, because the two detectors
-are otherwise on incommensurable scales. Per (entity, hour) the two p-values are
-combined by **Tippett** (the most significant track, Sidak-corrected); per entity
-the most significant hour is Sidak-corrected for the number of hours tested;
-alerts are the ``alert_budget_per_day`` most significant entities (or
-Benjamini-Hochberg at a target FDR).
+  * A **volumetric** track (per-entity ECOD over behavioural counts) scored
+    15/60 alone, and fusing it with the graph track *lowered* recall to 29/60
+    while *raising* false positives to 3.88/day. Under a fixed alert budget its
+    mediocre scores displaced strong graph detections. It uniquely caught 2
+    attacks and cost 14 -- decisively negative.
+  * A **peer** track (Poisson matrix factorization over the user x resource
+    matrix) added no technique the graph track did not already catch, was
+    correlated with the volumetric track (both functions of the same access
+    counts), and carried a dense O(users x dests) rate matrix.
+
+Reproduce the volumetric comparison with `scripts/evaluate_volumetric_track.py`.
+
+Raw scores are mapped through :class:`EmpiricalPValue` (frozen ECDF of the
+*training* benign distribution), so every view is commensurable. Per (entity,
+hour) the most significant view is taken and Sidak-corrected for the number of
+views tested; per entity the most significant hour is Sidak-corrected for the
+number of hours tested; alerts are the ``alert_budget_per_day`` most significant
+entities (or Benjamini-Hochberg at a target FDR).
 
 Research basis: Rubin-Delanchy, Lawson & Heard, "Anomaly detection for cyber
 security applications" (2016) for the p-value modus operandi; Heard &
 Rubin-Delanchy, Biometrika 105(1) (2018) for per-level combiner selection via
 Birnbaum (1954); Bowman et al., RAID 2020, for graph edge-novelty of lateral
-movement; Li et al., TKDE 2022, for ECOD.
+movement.
 
 DESIGN CONSTRAINTS (do not regress these)
 -----------------------------------------
-  * Never fuse uncalibrated scores. Two detectors on different scales cannot be
+  * Never fuse uncalibrated scores. Detectors on different scales cannot be
     combined by rescaling each with a constant and OR-ing the results; the
     constants end up mutually inconsistent and the composition is untestable.
     Everything becomes a p-value first.
@@ -52,10 +56,10 @@ DESIGN CONSTRAINTS (do not regress these)
     this: an entity's significance is its single most anomalous window, corrected
     for how many windows it was tested in, so more observation cannot manufacture
     significance.
-  * Combine tracks with Tippett, not Fisher. Fisher assumes independence and
-    rewards several moderate p-values; under a fixed alert budget that let
-    benign-but-busy entities displace real single-track detections. Tippett
-    (min-p) makes an entity as suspicious as its most anomalous track and no more.
+  * Combine with Tippett, not Fisher. Fisher assumes independence and rewards
+    several moderate p-values; under a fixed alert budget that let benign-but-busy
+    entities displace real detections. Tippett (min-p) makes an entity as
+    suspicious as its most anomalous evidence and no more.
 
 STATE CONTRACT
 --------------
@@ -71,7 +75,7 @@ signed with HMAC-SHA256 and integrity-verified before any field is read.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
@@ -84,10 +88,10 @@ from ueba_pipeline.graph.auth_graph_anomaly import (
 from ueba_pipeline.graph.sessions import SessionResolver
 from ueba_pipeline.models.fisher import benjamini_hochberg, sidak
 from ueba_pipeline.models.pvalue import EmpiricalPValue
-from ueba_pipeline.models.volumetric_detector import VolumetricDetector, _norm
+from ueba_pipeline.parsing.normalize import entity_key as _norm
 
-# Exact event types the graph track projects onto edges. Listed explicitly (not
-# by prefix) so a new sysmon_1x type cannot be routed into the graph by accident.
+# Exact event types the detector projects onto edges. Listed explicitly (not by
+# prefix) so a new sysmon_1x type cannot be routed into the graph by accident.
 GRAPH_EVENT_TYPES = frozenset(
     {"4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10"}
     # Every privileged directory operation the dir_op view classifies: group
@@ -110,43 +114,22 @@ def is_graph_event(event_type: str) -> bool:
 class WindowDetection:
     entity: str
     hour: datetime
-    graph_p: float = 1.0        # smallest graph p-value in this (entity, hour)
-    volumetric_p: float = 1.0   # volumetric p-value for this window
+    graph_p: float = 1.0        # smallest per-view p-value in this (entity, hour)
     n_graph_tests: int = 0
 
     @property
     def p(self) -> float:
-        """Combined p-value for this (entity, hour) cell.
+        """Significance of this (entity, hour) cell.
 
-        Two levels, two combiners chosen against the alternative each faces:
-
-          * WITHIN the graph stream, many homogeneous tests where we expect ONE
-            to be anomalous -> Tippett (min-p with a Sidak correction for the
-            number of tests). Fisher would be wrong: it adds 2 df per test, so a
-            single severe event among 500 benign ones in the same hour dilutes
-            below significance (Birnbaum 1954; Heard & Rubin-Delanchy 2018).
-
-          * ACROSS the graph and volumetric tracks -> Tippett again, NOT Fisher.
-            The tracks answer different questions and an intrusion typically
-            triggers ONE of them strongly (a relational anomaly OR a volumetric
-            shift), which is the one-small-among-k alternative Tippett is optimal
-            against -- not the few-small-among-many alternative Fisher is for.
-            Fisher was actively harmful here: under a fixed alert budget it let a
-            benign-but-busy entity's moderate scores combine into false
-            significance that displaced real single-track detections. Measured on
-            the honest all-technique benchmark, Fisher fusion cost the engine its
-            lead over the graph track alone (asrep_roasting: graph 10/10 but
-            Fisher-fused 0/10; Tippett-fused 9/10). Tippett makes an entity
-            exactly as suspicious as its single most anomalous track, so a strong
-            graph signal is never diluted by a moderate volumetric one.
+        Many homogeneous tests within the hour, where we expect ONE to be
+        anomalous -> Tippett (min-p with a Sidak correction for the number of
+        tests). Fisher would be wrong here: it adds 2 df per test, so a single
+        severe event among 500 benign ones in the same hour dilutes below
+        significance (Birnbaum 1954; Heard & Rubin-Delanchy 2018).
         """
-        g = sidak(self.graph_p, max(self.n_graph_tests, 1)) if self.graph_p < 1.0 else 1.0
-        ps = [q for q in (g, self.volumetric_p) if q < 1.0]
-        if not ps:
+        if self.graph_p >= 1.0:
             return 1.0
-        # Tippett: most-significant track, Sidak-corrected for the number of
-        # tracks that produced evidence in this cell.
-        return sidak(min(ps), len(ps))
+        return sidak(self.graph_p, max(self.n_graph_tests, 1))
 
     @property
     def risk(self) -> float:
@@ -159,7 +142,6 @@ class EntityRisk:
     p_value: float              # Sidak-corrected significance (lower = worse)
     top_hour: Optional[datetime]
     graph_hits: int
-    volumetric_hits: int
     n_windows: int = 0
     alerted: bool = False
 
@@ -191,66 +173,39 @@ class EngineConfig:
     alert_mode: str = "budget"
     alert_fdr: float = 0.01
     alert_budget_per_day: float = 5.0
-    stream_watermark_hours: float = 1.0   # grace before an hour window is final
-    # The volumetric ECOD track is a supplementary detector for volume-shift
-    # anomalies (mass request bursts, exfiltration). It is OFF by default: on the
-    # benchmark the per-view-calibrated graph track catches every technique the
-    # volumetric track does and more, so fusing it in only displaces graph
-    # detections under a fixed alert budget without adding recall. Enable it for a
-    # deployment whose threat model includes volume-based abuse a relational view
-    # cannot see, after validating it on that estate's data.
-    enable_volumetric: bool = False
-    # Fraction of the training period held out to calibrate each graph view's
-    # benign null against a frozen baseline (see TwoTrackEngine._fit_graph). The
-    # null must be measured on events the baseline has NOT already absorbed, or it
+    # Fraction of the training period held out to calibrate each view's benign
+    # null against a frozen baseline (see BehavioralEngine._fit_graph). The null
+    # must be measured on events the baseline has NOT already absorbed, or it
     # contains no benign-novelty mass and the detector over-flags every first
     # contact in production.
     null_calibration_fraction: float = 0.30
 
 
 @dataclass
-class TwoTrackEngine:
+class BehavioralEngine:
     config: EngineConfig = field(default_factory=EngineConfig)
     graph: AuthGraphAnomalyDetector = field(default_factory=lambda: AuthGraphAnomalyDetector(config=AuthGraphConfig()))
-    volumetric: VolumetricDetector = field(default_factory=VolumetricDetector)
     manifest: object = None
     # One frozen benign null PER graph view, so each relationship type is scored
     # against its own baseline and cannot pollute the others.
     _graph_nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
     # Per-view benign novelty rate measured at fit; see _fit_graph.
     view_stats: Dict[str, dict] = field(default_factory=dict)
-    _vol_null: Optional[EmpiricalPValue] = None
 
     # -- training ----------------------------------------------------------
-    def fit(self, events: List, config_capability=None, contaminated: Optional[set] = None) -> "TwoTrackEngine":
-        """Fit both tracks and calibrate both nulls on (benign) training events.
+    def fit(self, events: List, config_capability=None, contaminated: Optional[set] = None) -> "BehavioralEngine":
+        """Fit the baseline and calibrate the per-view nulls on training events.
 
         ``contaminated`` is an optional set of ground-truth attack-window event
         keys (from an ``attack_labels`` file, via the CLI ``--exclude-attack-
         labels`` flag or the evaluation harness's ``oracle`` mode); those events
-        are excluded from the graph baseline so a known training-period attack
-        cannot teach the baseline it is normal. It is unavailable in an unlabelled
+        are excluded from the baseline so a known training-period attack cannot
+        teach the baseline it is normal. It is unavailable in an unlabelled
         production cold start, and measured across seeds it changes nothing
-        (oracle == none on every track); it is retained because it is correct in
-        principle and free, not because it is load bearing -- see BENCHMARK.md.
+        (oracle == none); it is retained because it is correct in principle and
+        free, not because it is load bearing -- see docs/evaluation.md.
         """
         self.manifest = build_capability_manifest(events, config_capability)
-
-        # -- volumetric null (supplementary; off by default) -------------
-        # Same calibration discipline as the graph: the ECOD is fitted on the
-        # earlier part of training and its null is measured on a held-out later
-        # slice, so the null describes windows the model has NOT already seen.
-        # Calibrating on the fitted windows themselves is an in-sample null and
-        # under-states what a live benign window scores.
-        if self.config.enable_volumetric:
-            windows = sorted(build_user_windows(events, self.manifest, self.config.window_hours),
-                             key=lambda w: w.window_start)
-            cut = max(2, int(len(windows) * (1.0 - self.config.null_calibration_fraction)))
-            fit_w, calib_w = windows[:cut], windows[cut:] or windows[:cut]
-            self.volumetric.fit(fit_w)
-            self._vol_null = EmpiricalPValue().fit(self.volumetric.score_many(calib_w))
-
-        # -- graph baseline + per-view nulls (one prequential pass) ------
         self._fit_graph(_time_sorted_graph_events(events), contaminated)
         return self
 
@@ -332,17 +287,15 @@ class TwoTrackEngine:
         # silently misattribute months later.
         sessions = SessionResolver().fit(events, _norm)
         cell: Dict[Tuple[str, datetime], WindowDetection] = {}
-        self._score_volumetric(windows, cell)
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions)
-        detections = [d for d in cell.values()
-                      if d.graph_p < 1.0 or d.volumetric_p < 1.0]
+        detections = [d for d in cell.values() if d.graph_p < 1.0]
         hours = [d.hour for d in detections] or [w.window_start for w in windows]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
         return detections, self._rollup(detections, windows, observed_days=max(days, 1.0))
 
-    def observe(self, events: List) -> "TwoTrackEngine":
-        """Explicitly fold events into the graph baseline (online adaptation).
+    def observe(self, events: List) -> "BehavioralEngine":
+        """Explicitly fold events into the baseline (online adaptation).
 
         Separated from ``score`` so that batch scoring stays reproducible; a
         caller that wants adaptation calls ``score`` and then ``observe``.
@@ -355,54 +308,33 @@ class TwoTrackEngine:
     def score_stream(self, events: Iterator) -> Iterator[WindowDetection]:
         """Score in event-time order, adapting as it goes (absorb=True).
 
-        A live stream *should* adapt; batch ``score()`` must not.
+        A live stream *should* adapt; batch ``score()`` must not. Detections are
+        emitted per event rather than per completed window, so a live consumer
+        sees a relational anomaly as it happens instead of waiting out a
+        watermark.
         """
-        grace = timedelta(hours=self.config.stream_watermark_hours)
-        buffers: Dict[datetime, list] = {}
-        latest: Optional[datetime] = None
         sessions = SessionResolver()
         for e in events:
             if e.event_time is None:
                 continue
-            latest = e.event_time if latest is None else max(latest, e.event_time)
             # Sessions are maintained incrementally in event order, so a stream
             # resolves a host to whoever logged on earlier in the same stream.
             if e.event_type == "4624":
                 sessions.fit([e], _norm) if not sessions._logons else _stream_session(sessions, e)
-            if is_graph_event(e.event_type):
-                cell: Dict[Tuple[str, datetime], WindowDetection] = {}
-                self._score_graph_event(e, cell, absorb=True, sessions=sessions)
-                for d in cell.values():
-                    if d.graph_p < 1.0:
-                        yield d
-            buffers.setdefault(_floor_hour(e.event_time), []).append(e)
-            for hr in [h for h in buffers if h + timedelta(hours=self.config.window_hours) + grace <= latest]:
-                yield from self._finalize_hour(buffers.pop(hr))
-        for hr in sorted(buffers):
-            yield from self._finalize_hour(buffers[hr])
+            if not is_graph_event(e.event_type):
+                continue
+            cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+            self._score_graph_event(e, cell, absorb=True, sessions=sessions)
+            for d in cell.values():
+                if d.graph_p < 1.0:
+                    yield d
 
-    def _finalize_hour(self, events: list) -> List[WindowDetection]:
-        if self.manifest is None:
-            return []
-        windows = build_user_windows(events, self.manifest, self.config.window_hours)
-        cell: Dict[Tuple[str, datetime], WindowDetection] = {}
-        self._score_volumetric(windows, cell)
-        return [d for d in cell.values() if d.volumetric_p < 1.0]
-
-    # -- track scoring -----------------------------------------------------
+    # -- scoring -----------------------------------------------------------
     def _cell(self, cell: Dict, entity: str, hour: datetime) -> WindowDetection:
         key = (entity, hour)
         if key not in cell:
             cell[key] = WindowDetection(entity, hour)
         return cell[key]
-
-    def _score_volumetric(self, windows: List, cell: Dict) -> None:
-        if not windows or self._vol_null is None:
-            return
-        ps = self._vol_null.pvalue(self.volumetric.score_many(windows))
-        for w, p in zip(windows, ps):
-            d = self._cell(cell, _norm(w.user), _floor_hour(w.window_start))
-            d.volumetric_p = min(d.volumetric_p, float(p))
 
     def _entity_for(self, e, sessions: Optional[SessionResolver]) -> str:
         """Resolve a graph event to the ACCOUNT it should be attributed to.
@@ -455,12 +387,11 @@ class TwoTrackEngine:
     # -- rollup / alerting -------------------------------------------------
     def _rollup(self, detections: List[WindowDetection], windows: Optional[List] = None,
                 observed_days: Optional[float] = None) -> List[EntityRisk]:
-        """Entity risk = Sidak-corrected minimum combined p over the entity's hours.
+        """Entity risk = Sidak-corrected minimum hourly p over the entity's hours.
 
-        Each hour's combined p is the Tippett combination of the graph and
-        volumetric tracks (WindowDetection.p). Taking a minimum over n windows is
-        itself a test over n windows; without the Sidak correction, any entity
-        observed long enough eventually looks significant. Alerts are then
+        Each hour's significance is ``WindowDetection.p``. Taking a minimum over n
+        windows is itself a test over n windows; without the Sidak correction, any
+        entity observed long enough eventually looks significant. Alerts are then
         selected by a fixed analyst budget, or by Benjamini-Hochberg across
         entities.
         """
@@ -486,7 +417,6 @@ class TwoTrackEngine:
                 p_value=sidak(best.p, n),
                 top_hour=best.hour,
                 graph_hits=sum(1 for d in ds if d.graph_p < 1.0),
-                volumetric_hits=sum(1 for d in ds if d.volumetric_p < 1.0),
                 n_windows=n,
             ))
 
@@ -518,11 +448,11 @@ class TwoTrackEngine:
         save_engine(self, directory)
 
     @staticmethod
-    def load(directory: str) -> "TwoTrackEngine":
+    def load(directory: str) -> "BehavioralEngine":
         from ueba_pipeline.models.serialization import load_engine
         engine = load_engine(directory)
-        if not isinstance(engine, TwoTrackEngine):
-            raise ValueError("bundle is not a TwoTrackEngine")
+        if not isinstance(engine, BehavioralEngine):
+            raise ValueError("bundle is not a BehavioralEngine")
         return engine
 
 
