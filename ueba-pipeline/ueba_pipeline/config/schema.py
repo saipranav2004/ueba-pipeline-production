@@ -131,16 +131,17 @@ class SimulatorConfig(_StrictModel):
 
 
 class SecurityConfig(_StrictModel):
-    """Model-bundle integrity. Persisted bundles are pickled Python objects;
-    pickle.load executes arbitrary embedded code, so bundles moving between
-    machines (e.g. via S3Backend) must be signed and verified, not loaded on
-    trust alone."""
+    """Model-bundle integrity.
 
-    # SecretStr + repr=False: the signing key is the single most sensitive
-    # secret in the system -- anyone who learns it can forge valid bundle
-    # signatures and thereby get arbitrary code execution via pickle.load on
-    # the next model load. It must never reach a log, error tracker, repr, or
-    # serialized support bundle. Read via .get_secret_value().
+    A persisted bundle is a schema-explicit JSON + NumPy directory that cannot
+    carry executable content, but a bundle moving between machines must still be
+    signed and verified so a tampered baseline cannot be loaded on trust."""
+
+    # SecretStr + repr=False: the signing key is the most sensitive secret in the
+    # system -- anyone who learns it can forge a valid bundle signature and so
+    # substitute the baseline the detector trusts. It must never reach a log,
+    # error tracker, repr, or serialized support bundle. Read via
+    # .get_secret_value().
     model_signing_key: Optional[SecretStr] = Field(
         default=None, repr=False,
         description="HMAC key for signing/verifying persisted model bundles. "
@@ -214,28 +215,13 @@ class IdpConnectorConfig(_StrictModel):
 class IdentityGraphConfig(_StrictModel):
     """Configuration for the structural identity graph.
 
-    Consumed only by the `graph-viz` command and the Memgraph backend. Nothing
-    here affects detection: no code path fuses structural risk into a behavioural
-    score. See graph/identity_graph.py.
+    Consumed only by the `graph-viz` command. Nothing here affects detection: no
+    code path fuses structural risk into a behavioural score. Metrics are
+    computed with NetworkX on a rolling snapshot, which at this project's scale
+    (a few hundred to a few thousand nodes) completes well inside the retrain
+    window. See graph/identity_graph.py.
     """
 
-    backend: str = Field(
-        default="networkx",
-        description="Graph compute backend. 'networkx' (default) is validated "
-                    "for this project's scale (< a few thousand nodes, snapshot "
-                    "recompute < 1s). 'memgraph' is the documented scale-out "
-                    "path for larger graphs or streaming edge maintenance "
-                    "(see graph/backend.py).",
-    )
-    memgraph_uri: str = Field(
-        default="bolt://localhost:7687",
-        description="Bolt URI for the Memgraph instance (backend='memgraph').",
-    )
-    memgraph_user: str = Field(default="", description="Memgraph username (blank = no auth).")
-    memgraph_password: SecretStr = Field(
-        default=SecretStr(""), repr=False,
-        description="Memgraph password; masked in repr/dump.",
-    )
     tier0_risk_weight: float = Field(
         default=0.40, ge=0, le=1,
         description="Weight for Tier-0 proximity in composite risk score.",

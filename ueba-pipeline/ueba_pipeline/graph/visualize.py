@@ -4,7 +4,7 @@ graph/visualize.py — Standalone HTML visualization of the identity graph.
 Renders the IdentityGraph (users, groups, computers, service accounts and
 their membership / access / delegation edges) as a self-contained interactive
 HTML file: no server, no build step, opens in any browser. This exists so the
-graph the pipeline reasons over — and the scale-out Memgraph backend mirrors —
+graph the pipeline reasons over —
 can be reviewed by eye rather than only queried through Bolt.
 
 What the view shows:
@@ -93,24 +93,11 @@ def _shortest_path_to_tier0(
 
 
 def _as_identity_graph(graph) -> IdentityGraph:
-    """Accept either an IdentityGraph (NetworkX backend) or a
-    MemgraphIdentityGraph and return the underlying IdentityGraph.
-
-    The Memgraph backend delegates all construction (nodes, edges, Tier-0
-    classification) to an in-memory IdentityGraph `_builder`; only the global
-    metrics are computed in Memgraph. The topology is therefore identical, so
-    the same visualizer renders either backend. When a Memgraph backend is
-    passed we render off its builder — the drawn structure and Tier-0 set match
-    exactly what Memgraph loaded via UNWIND.
-    """
+    """Validate that the caller passed a constructed IdentityGraph."""
     if isinstance(graph, IdentityGraph):
         return graph
-    builder = getattr(graph, "_builder", None)
-    if isinstance(builder, IdentityGraph):
-        return builder
     raise TypeError(
-        f"visualize expects an IdentityGraph or MemgraphIdentityGraph, "
-        f"got {type(graph).__name__}"
+        f"visualize expects an IdentityGraph, got {type(graph).__name__}"
     )
 
 
@@ -198,7 +185,7 @@ def build_visualization_payload(graph, max_nodes: int = 400) -> dict:
 
 def render_html(graph, title: str = "Identity Graph", max_nodes: int = 400) -> str:
     """Return a complete standalone HTML document for the graph. Accepts either
-    the NetworkX (IdentityGraph) or Memgraph (MemgraphIdentityGraph) backend.
+    the IdentityGraph.
     Large graphs are capped to the top-risk subgraph (see
     build_visualization_payload); pass max_nodes=0 to render everything."""
     payload = build_visualization_payload(graph, max_nodes=max_nodes)

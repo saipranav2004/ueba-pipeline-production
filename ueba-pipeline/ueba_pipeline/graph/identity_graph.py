@@ -9,8 +9,8 @@ This answers a question behaviour cannot: an account that has done nothing
 unusual may still be one hop from a Tier-0 asset.
 
 The only consumer is the ``graph-viz`` CLI command, which renders the graph and
-its scores to standalone HTML for an analyst to read. ``memgraph_backend.py``
-wraps this class for scale-out. That is the whole of it.
+its scores to standalone HTML for an analyst to read.
+That is the whole of it.
 
 THIS MODULE IS NOT PART OF DETECTION
 ------------------------------------
@@ -53,9 +53,10 @@ an alert path. Do not promote them into scoring without calibrating them first.
 
 BACKEND
 -------
-NetworkX, in-memory, for this scale (a few thousand nodes; snapshot recompute
-under a second). ``graph/backend.py`` selects Memgraph instead when
-``identity_graph.backend = "memgraph"``; both expose the same interface.
+NetworkX, in-memory. Structural metrics are recomputed on a rolling snapshot
+rather than per event, so the backend only has to finish inside the retrain
+window: at this project's scale (a few hundred to a few thousand nodes) the full
+five-metric pass completes in well under a second on one core.
 
 Analysis patterns follow BloodHound Enterprise (shortest path to Tier-0, exposure
 scoring) and Cartography (declarative node/edge schema), implemented over
