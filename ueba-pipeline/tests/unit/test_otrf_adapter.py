@@ -1,9 +1,8 @@
-"""The OTRF real-telemetry adapter, and the parser fixes that real data forced.
+"""The OTRF real-telemetry adapter.
 
 The offline tests run against synthetic records written in OTRF's exact flat
-schema — including the three event-time field names and the short-fraction-plus-Z
-timestamp that broke the parser before this work. They are the regression guard
-for those fixes.
+schema, covering the three event-time field names and the timestamp formats real
+captures use. They pin the ingestion contract against real Windows event shapes.
 
 The networked test (opt-in via UEBA_RUN_OTRF_DOWNLOAD=1) downloads a real OTRF
 DCSync capture and asserts the engine projects the same behavioural graph edge on
@@ -59,16 +58,17 @@ def test_flat_records_parse_through_the_production_parser():
     ]
     events = [normalize_event(r) for r in records]
     assert all(e is not None for e in events)
-    # Every record must carry a parsed event_time — the three field names and the
-    # short-fraction-plus-Z form are exactly the shapes that used to drop events.
+    # Every record must carry a parsed event_time. Real captures place the event
+    # time under any of three field names, in either of two formats; an
+    # unparsed timestamp silently removes the event from every window.
     assert all(e.event_time is not None for e in events), (
         "a real OTRF timestamp field or format failed to parse"
     )
     assert all(e.event_type == "sysmon_10" for e in events)
 
 
-def test_short_fraction_z_timestamp_parses():
-    """Direct regression guard: `.927Z` must not become `.927+00+00:00`."""
+def test_iso_timestamp_variants_parse():
+    """Every ISO-8601 shape real Windows exports emit must parse."""
     from ueba_pipeline.parsing.normalize import _parse_iso
     assert _parse_iso("2023-07-19T09:02:18.927Z") is not None
     assert _parse_iso("2020-08-05T06:10:03.798Z") is not None

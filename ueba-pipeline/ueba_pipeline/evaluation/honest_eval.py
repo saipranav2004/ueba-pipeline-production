@@ -36,7 +36,7 @@ Guarantees, each of which is a way an ITDR benchmark is commonly wrong:
   VARIANCE. Multiple seeds with bootstrap CIs, and n printed beside every ratio
   so 100% of 3 cannot masquerade as 100%.
 
-VERIFIED NON-DEFECTS (tested clean; recorded so they are not re-litigated)
+PROPERTIES VERIFIED CLEAN (recorded so they are not re-litigated)
   * Look-ahead via global feature pre-build: building windows over all events
     vs. train-only changes ZERO of 7,442 train-window feature values, and the
     capability manifests are identical.

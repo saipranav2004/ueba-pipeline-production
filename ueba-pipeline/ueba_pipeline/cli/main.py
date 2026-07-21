@@ -1,17 +1,17 @@
 """cli/main.py -- ``python -m ueba_pipeline.cli.main <command>``.
 
 Commands:
-  train             ingest -> features -> fit two-track engine -> signed bundle
+  train             ingest -> features -> fit the engine -> signed bundle
   score             load bundle -> ingest -> score -> ranked entity alerts
   score-stream      load bundle -> score online, adapting the baseline as it goes
   drift-check       compare a live window's capabilities against the trained bundle
-  walk-forward-eval causal out-of-time evaluation of the two-track engine
+  walk-forward-eval causal out-of-time evaluation of the engine
   model-benchmark   compare classical models on the feature matrix (leakage-resistant)
   lanl-eval         per-authentication ROC on LANL 2015 (or a LANL-format fixture)
   graph-viz         render the identity graph to standalone HTML
 
 Thin orchestration only; detection logic lives in ueba_pipeline.engine and the
-two detector modules it composes.
+graph detector it composes.
 """
 from __future__ import annotations
 
@@ -83,9 +83,9 @@ def cmd_score_stream(args: argparse.Namespace) -> None:
     """Score events in event-time order, adapting the graph baseline as it goes.
 
     This is the online path: the detector absorbs each event before the next
-    arrives, so a live estate's baseline tracks drift. Detections are emitted as
-    each (entity, hour) window finalises past the watermark. Batch ``score`` is
-    the reproducible path; this one trades reproducibility for adaptation.
+    arrives, so a live estate's baseline tracks drift. Detections are emitted per
+    event. Batch ``score`` is the reproducible path; this one trades
+    reproducibility for adaptation.
     """
     engine = BehavioralEngine.load(args.model_dir)
     events = _read_events(args.data_dir)
@@ -153,8 +153,8 @@ def cmd_walk_forward(args: argparse.Namespace) -> None:
 
 def cmd_model_benchmark(args: argparse.Namespace) -> None:
     """Compare classical models on the behavioural feature matrix under the four
-    leakage-resistant split protocols, with the shipped graph track as a
-    reference column. See evaluation/model_benchmark.py for the protocol design."""
+    leakage-resistant split protocols, with the shipped detector as a reference
+    column. See evaluation/model_benchmark.py for the protocol design."""
     from ueba_pipeline.evaluation.model_benchmark import (
         aggregate, build_window_dataset, evaluate_graph_reference,
         graph_reference_scores, render, run_protocol,
@@ -245,7 +245,7 @@ def main() -> None:
     p_wf.add_argument("--contamination", choices=["oracle", "none"], default="none",
                       help="'oracle' cleans the baseline with ground-truth labels "
                            "(upper bound, unavailable in production); 'none' is the "
-                           "unlabelled cold start. Measured: identical results.")
+                           "unlabelled cold start. Both bounds measure identically.")
     p_wf.set_defaults(func=cmd_walk_forward)
 
     p_mb = sub.add_parser("model-benchmark",

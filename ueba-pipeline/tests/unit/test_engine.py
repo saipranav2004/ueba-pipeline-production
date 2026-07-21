@@ -25,10 +25,12 @@ H = datetime(2025, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
 
 
 def test_is_graph_event_matches_exactly_not_by_prefix():
-    """This was a startswith() over a prefix tuple ending in "sysmon_1", so it
-    also swallowed sysmon_10/11/12. Measured: 855 sysmon_11 (FileCreate) events
-    were silently routed into the graph track. sysmon_10 (ProcessAccess) IS
-    wanted and is now listed explicitly rather than matched by accident."""
+    """Event-type routing must match exactly, never by prefix.
+
+    A prefix test on "sysmon_1" also matches sysmon_10/11/12, quietly routing
+    FileCreate and registry events into a detector that models process access.
+    sysmon_10 IS wanted, so it is listed explicitly rather than matched by
+    accident."""
     for t in ("4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10"):
         assert is_graph_event(t)
     for t in ("sysmon_11", "sysmon_12", "sysmon_3", "4672", "4104", "46240"):
@@ -46,8 +48,10 @@ def test_window_detection_cell_p_is_tippett_corrected():
 
 
 def test_severity_beats_frequency():
-    """The defect this replaced: noisy-OR let many mild detections outrank one
-    severe one. Fisher must not."""
+    """One severe detection must outrank many mild ones.
+
+    Any combiner that accumulates evidence lets a busy-but-benign entity displace
+    a genuinely anomalous one under a fixed alert budget."""
     from ueba_pipeline.models.fisher import fisher_combine
     severe = fisher_combine([1e-6])[0]
     chatty = fisher_combine([0.3] * 40)[0]
@@ -55,9 +59,11 @@ def test_severity_beats_frequency():
 
 
 def test_rollup_is_sidak_corrected_not_accumulating():
-    """The old rollup accumulated: enough mild hours always crossed 0.85. The
-    new one takes the most significant hour and corrects for how many were
-    tested, so more observation cannot manufacture significance."""
+    """More observation must not manufacture significance.
+
+    The rollup takes an entity's most significant hour and Sidak-corrects it for
+    how many hours were tested, so an entity watched for longer does not become
+    suspicious merely by being watched."""
     eng = BehavioralEngine()
     mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4, n_graph_tests=1)
             for h in range(24)]
@@ -114,8 +120,8 @@ def test_score_stream_emits_detections_and_stays_pure_in_batch():
     out = list(eng.score_stream(iter(stream)))
     assert any(d.graph_p < 1.0 for d in out), "stream must emit the novel-edge detection"
 
-    # score_stream adapts (absorb=True) while score() must not -- verify the
-    # asymmetry that replaced the old always-mutating default.
+    # score_stream adapts (absorb=True) while score() must not: verify that
+    # asymmetry holds.
     eng2 = BehavioralEngine(config=EngineConfig())
     eng2._fit_graph(base)
     probe = _sysmon10("rundll32.exe", "lsass.exe", minute=700)

@@ -393,7 +393,7 @@ class IdentityGraph:
                         for n in self.graph}
 
         # 4. Shortest path to Tier-0 assets.
-        # Previously ran a full BFS from every node to every Tier-0 node:
+        # A full BFS from every node to every Tier-0 node would be
         # O(V * k * (V+E)) — quadratic in V and the second scale bottleneck
         # after betweenness. Replaced with a SINGLE multi-source BFS: seed the
         # frontier with all Tier-0 nodes at once and let it expand outward, so

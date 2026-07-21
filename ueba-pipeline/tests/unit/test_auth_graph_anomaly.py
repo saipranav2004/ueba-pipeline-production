@@ -21,11 +21,9 @@ _SURPRISING = 3.0
 # NOTE ON COLD START (semantic change, BENCHMARK.md):
 # Surprise is -log P(dst|src) under a Dirichlet-smoothed null. With an EMPTY
 # baseline, pi_d = 1 and P(dst|src) = 1, so surprise = 0: with no evidence,
-# nothing is surprising. That is correct Bayesian behaviour and it is the exact
-# inverse of the old constant, under which a first-ever edge from a brand-new
-# account scored the maximum 6.0 -- which is why new/low-activity accounts
-# dominated the false positives. Tests must therefore establish a baseline
-# before asserting that a novel edge is surprising.
+# nothing is surprising. This is what keeps new and low-activity accounts out of
+# the false positives -- a cold-start edge is not evidence of anything. Tests must
+# therefore establish a baseline before asserting that a novel edge is surprising.
 
 
 from ueba_pipeline.graph.auth_graph_anomaly import (
@@ -153,13 +151,13 @@ def test_process_access_projects_generic_edges():
 
 
 def test_kerb_context_downgrade_is_scored_by_evidence_not_a_gate():
-    """This used to assert the _ESTABLISHMENT_GATED_VIEWS behaviour: a first-ever
-    ticket was hard-suppressed, a change for a known account scored the constant
-    6.0. That gate is deleted -- ablation across 3 seeds was bit-identical
-    (13/15, FP/day 3.22) because the Dirichlet conditional expresses the same
-    thing natively: a brand-new principal has n_s = 0, backs off to the global
-    marginal, and is unsurprising by construction. What must hold is the ordering
-    it was hand-coding, and it must now hold *because of the model*."""
+    """A ticket-context downgrade must rank by evidence, not by a hand-coded gate.
+
+    The Dirichlet conditional expresses the required ordering natively: a
+    brand-new principal has n_s = 0, backs off to the global marginal, and is
+    unsurprising by construction, while an established account switching context
+    is genuinely improbable. The ordering must hold *because of the model*, so no
+    establishment gate is needed to impose it."""
     det = AuthGraphAnomalyDetector()
     for h in range(20):
         det.observe_baseline(_tgt("known_user", "0x12", "2", minute=h * 30))

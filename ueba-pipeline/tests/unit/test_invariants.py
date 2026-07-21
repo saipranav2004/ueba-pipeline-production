@@ -1,6 +1,9 @@
-"""
-tests/unit/test_regressions.py — invariants that guard behaviour easy to break
-silently. Each test names the failure it prevents.
+"""Pipeline invariants that are easy to break silently.
+
+Each test states a property the pipeline must hold and why holding it matters.
+The failures these guard against are quiet ones -- a mis-keyed lookup that simply
+misses, a double-counted event stream, an edge keyed on a value that churns --
+which produce plausible-looking numbers rather than an error.
 """
 
 import json
@@ -20,9 +23,11 @@ from ueba_pipeline.features.manifest import CapabilityManifest
 
 
 def test_normalize_username_strips_netbios_prefix():
-    """Guards: Sysmon's User field ("NEXOVATE\\gsundaram") was treated as a
-    distinct identity from the SAM name ("gsundaram") used by Security-log
-    events, fragmenting one real user's behavior across two model buckets.
+    """Sysmon's NetBIOS User field must resolve to the same identity as the SAM
+    name that Security-log events carry.
+
+    Two spellings of one account would otherwise fragment a single real user's
+    behaviour across two model buckets, halving the evidence behind each.
     """
     assert normalize_username("NEXOVATE\\gsundaram") == "gsundaram"
     assert normalize_username("nexovate\\gsundaram") == "gsundaram"
@@ -41,7 +46,7 @@ def test_normalize_username_excludes_machine_accounts():
 
 def test_file_event_source_excludes_merged_representation_dirs(tmp_path):
     """
-    Guards: enterprise_simulator writes every event to BOTH a per-channel
+    enterprise_simulator writes every event to BOTH a per-channel
     directory (e.g. security_logs/) AND a merged kafka_json/ directory
     containing the same events combined into one stream. from_directory()'s
     recursive glob must not read both and double-count every event.
@@ -147,15 +152,10 @@ def test_kl_divergence_requires_normalized_mass():
 
 def test_roster_projection_matches_normalize_username_key_shape():
     """
-    Invariant: nothing produced the roster.json file the
-    project's own documented `train --roster` command requires -- the
-    Quickstart failed with FileNotFoundError against fresh generator
-    output. Fixed with core.employees.roster_to_peer_group_map(). This
-    test guards both that the file gets written in the right shape AND
-    that its keys actually match what ueba_pipeline.parsing.normalize.
-    normalize_username produces -- a roster keyed differently would fail
-    silently (peer-group lookups just miss) rather than erroring, which is
-    a worse bug than the missing file it replaces.
+    The roster must be written in the shape the pipeline consumes AND keyed the
+    way ``parsing.normalize.normalize_username`` keys accounts. A roster keyed
+    differently does not raise -- peer-group lookups simply miss -- so the
+    mismatch would be invisible at runtime and silently degrade every lookup.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "enterprise_simulator"))
     from core.employees import build_employee_roster, roster_to_peer_group_map
@@ -347,19 +347,12 @@ def test_defender_malware_flag_is_computed_when_available():
 
 def test_rare_signal_groups_bypass_volume_fraction_gate():
     """
-    Bug discovered while verifying the C3 fix end-to-end (not from the
-    review -- found by actually running the pipeline against real
-    generator output): CapabilityManifest gated every group on the same
-    volume floor, including "defender". Measured on a real 5-day/253-employee
-    run, Defender produced 2 events out of 55,996 total -- since Defender only
-    fires on an actual malware verdict, a shared volume floor can never be
-    crossed by a well-instrumented deployment behaving normally, which made the
-    f_malware_detected_flag extractor dead code in practice despite being wired
-    correctly. Fixed by presence-gating specific rare-by-design groups (any
-    nonzero count admits them). (The volume floor itself was later changed from
-    a fraction of total events to an absolute count -- see
-    CapabilityConfig.min_events_for_capability -- but presence-gating is the
-    property under test here and is unaffected.)
+    Groups whose signal is rare BY DESIGN must be admitted on their first
+    occurrence, not gated on volume. Measured on a 5-day, 253-employee estate,
+    Defender produced 2 events out of 55,996: since it only fires on an actual
+    malware verdict, any shared volume floor is unreachable for a healthy
+    deployment, which would leave the feature permanently inert despite being
+    wired correctly.
     """
     from ueba_pipeline.features.manifest import build_capability_manifest
     from ueba_pipeline.config.schema import CapabilityConfig
@@ -413,10 +406,10 @@ def test_capability_gate_is_an_absolute_floor_not_a_fraction():
     """A present source must not be gated out just because another, unrelated,
     higher-volume source shares the bootstrap window.
 
-    Under the old fraction-of-total gate, a flood of Sysmon events raised the
-    bar every other source had to clear; a legitimately-present but lower-volume
-    Kerberos source could then fall below it. The absolute floor decides each
-    source on its own event count, so the two do not gate each other.
+    A fraction-of-total gate would let a flood of Sysmon events raise the bar
+    every other source has to clear, so a legitimately-present but lower-volume
+    Kerberos source could fall below it. An absolute floor decides each source on
+    its own event count, so two independent log sources never gate each other.
     """
     from ueba_pipeline.config.schema import CapabilityConfig
     from ueba_pipeline.features.manifest import build_capability_manifest
@@ -436,8 +429,8 @@ def test_capability_gate_is_an_absolute_floor_not_a_fraction():
 
 
 def test_capability_gate_rejects_a_single_stray_event():
-    """The floor's purpose: a lone leftover event from a decommissioned pilot
-    must not enable an entire feature group."""
+    """A lone leftover event from a decommissioned pilot install must not enable
+    an entire feature group."""
     from ueba_pipeline.config.schema import CapabilityConfig
     from ueba_pipeline.features.manifest import build_capability_manifest
 
@@ -456,7 +449,7 @@ def test_capability_gate_rejects_a_single_stray_event():
 
 def test_capability_gate_is_stable_across_window_sizes():
     """The same source at the same rate must produce the same decision whether
-    the window is small or large — the property the fraction gate lacked."""
+    the bootstrap window is small or large."""
     from ueba_pipeline.config.schema import CapabilityConfig
     from ueba_pipeline.features.manifest import build_capability_manifest
 
@@ -473,14 +466,13 @@ def test_golden_silver_ticket_uses_full_history_not_window_local_tgt():
     src_ip against the account's FULL-HISTORY TGT/TGS issuance, not just
     tickets issued inside the same hourly window.
 
-    Guards: the original detector collected legitimate-ticket src_ips window-
-    locally. A TGT is issued once (e.g. 02:00) and reused for ~10h, so every
-    later hourly logon window contained a Type-3 Kerberos 4624 with NO 4768
-    of its own -> f_golden/silver_ticket_flag fired on entirely benign
-    cross-window logons. Measured at ~0.03% of windows on a realistic estate,
-    each a guaranteed false positive at 0.90-0.98 indicator confidence.
+    A TGT is issued once (e.g. 02:00) and reused for ~10h, so most hourly logon
+    windows contain a Type-3 Kerberos 4624 with no 4768 of their own. Correlating
+    only within the window would therefore fire on entirely benign cross-window
+    logons. The discriminator is "no ticket for this account from this address
+    before now", not "none in this hour".
 
-    This test encodes both halves of the fix on one synthetic account:
+    This test encodes both halves of the property on one synthetic account:
       - a benign logon from the account's normal IP (whose TGT was requested
         in an EARLIER window) must NOT fire, and
       - a forged-ticket logon from an IP the account never requested a ticket
@@ -544,8 +536,8 @@ def test_golden_silver_ticket_uses_full_history_not_window_local_tgt():
 
 
 def test_source_edge_keys_on_device_not_address():
-    """Guards: an authentication's source must be identified by the DEVICE, not
-    the IP address. Addresses churn constantly in a real estate (DHCP leases,
+    """An authentication's source must be identified by the DEVICE, not the IP
+    address. Addresses churn constantly in a real estate (DHCP leases,
     VPN pool assignment, wired vs Wi-Fi), so keying the (account -> source) edge
     on an address turns ordinary churn into a stream of novel edges -- measured on
     a realistically churning estate, 91.8% of benign edges look novel when keyed on

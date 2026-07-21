@@ -412,9 +412,8 @@ _GROUP_EXTRACTORS: Dict[str, Callable[[List[NormalizedEvent]], Dict[str, float]]
 # 1:1 with _GROUP_EXTRACTORS: every group with an extractor lists the event
 # types it consumes here, and each of those event types must have a field map
 # in normalize.py (otherwise the events arrive as event_type="unknown" and the
-# extractor sees an empty list -- the phantom-coverage class of bug the
-# capability manifest now guards against, since a group is only claimed for
-# events that actually mapped).
+# extractor sees an empty list. The capability manifest guards against that
+# phantom coverage: a group is claimed only for events that actually mapped).
 _GROUP_EVENT_TYPES: Dict[str, set] = {
     "auth": {"4624", "4625", "4672"},
     "kerberos": {"4768", "4769", "4771"},

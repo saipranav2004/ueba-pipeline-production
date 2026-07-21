@@ -2,15 +2,14 @@
 
 WHY NOT PICKLE
 --------------
-The engine previously persisted with ``pickle`` behind an HMAC signature. The
-signature guarantees integrity, but it does not change what ``pickle.loads``
-*is*: a bytecode interpreter that reconstructs arbitrary Python objects and can
-run arbitrary code during deserialization. In a security product the model file
-is exactly the artifact an attacker would target — replace it, or leak the
-signing key once, and loading it executes their code inside the detector. The
-研究 basis is explicit that integrity protection does not remove this class of
-risk (PickleBall, ACM CCS 2025); the accepted remedy is a serialization format
-that has no code path to executing anything.
+``pickle.loads`` is a bytecode interpreter: it reconstructs arbitrary Python
+objects and can run arbitrary code during deserialization. An HMAC signature
+guarantees integrity but does not change that. In a security product the model
+file is exactly the artifact an attacker would target — substitute it, or leak
+the signing key once, and loading it executes their code inside the detector.
+The literature is explicit that integrity protection does not remove this class
+of risk (PickleBall, ACM CCS 2025); the remedy is a serialization format with no
+code path to executing anything.
 
 WHAT THIS FORMAT IS
 -------------------

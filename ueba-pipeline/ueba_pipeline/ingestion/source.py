@@ -21,9 +21,11 @@ from ueba_pipeline.parsing.normalize import NormalizedEvent, normalize_event
 
 @dataclass
 class IngestStats:
-    """Counters surfaced to monitoring/ — a pipeline that silently drops
-    unparseable records is a data-quality bug waiting to happen, so this is
-    tracked from the start rather than added after an incident."""
+    """Ingest counters surfaced to monitoring/.
+
+    A pipeline that silently drops unparseable records hides a data-quality
+    problem until it has already skewed a baseline, so every record is either
+    parsed or counted."""
 
     total_records: int = 0
     unrecognized_envelope: int = 0
