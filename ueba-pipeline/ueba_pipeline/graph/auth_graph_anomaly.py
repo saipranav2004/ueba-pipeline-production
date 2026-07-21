@@ -5,23 +5,17 @@ where the signal is a *relationship* (who authenticated to what, from where)
 rather than a per-entity feature histogram. Each authentication event is
 projected onto directed edges of an identity graph and scored online.
 
-Two complementary, unsupervised signals are combined per edge:
+The signal is edge surprise: how improbable a (principal -> resource)
+relationship is under the estate's learned access distribution, graded in nats
+rather than flagged as novel or not. This generalises the "New Authentication"
+filter of Bowman et al., "Detecting Lateral Movement in Enterprise Computer
+Networks with Unsupervised Graph AI" (RAID 2020), which reported ~85% TPR at
+0.9% FPR on LANL -- far above non-graph ML on the same data.
 
-1. Edge novelty. A first-time-seen (principal -> resource) relationship for an
-   entity, relative to the causal baseline. This is the "New Authentication"
-   filter of Bowman et al., "Detecting Lateral Movement in Enterprise Computer
-   Networks with Unsupervised Graph AI" (RAID 2020), which reported ~85% TPR at
-   0.9% FPR on LANL -- far above non-graph ML on the same data.
-
-2. Microcluster burst. A sudden group of similar edges (fan-out / spray / a
-   forged credential reused rapidly). This is the MIDAS score of Bhatia et al.,
-   "MIDAS: Microcluster-Based Detector of Anomalies in Edge Streams" (AAAI
-   2020): a chi-squared surprise between an edge's current-tick count and its
-   running mean. We implement MIDAS with exact per-edge
-   counters. Constant-memory count-min sketches (the paper's mechanism) swap in
-   behind the same interface at production scale; exact counters are used here
-   because the estate size makes them cheap and removes sketch collision noise
-   during detection-quality validation.
+A microcluster (MIDAS) term over per-tick repetition was measured against this
+model and removed: it cost ten detections and 0.7 additional false-positive
+entities a day, because benign repetition is common and a raw repeat count fires
+on it. What remains of that idea is the non-absorption rule below.
 
 Scoring is read-only with respect to attack absorption (MIDAS-F rationale,
 Bhatia et al. TKDD 2022): a flagged edge is not folded into the baseline, so an
@@ -31,6 +25,7 @@ attacker cannot normalise their own behaviour by repetition.
 from __future__ import annotations
 
 import math
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
@@ -95,9 +90,9 @@ def _source_identity(fields) -> str:
 
 @dataclass
 class _EdgeState:
-    total: float = 0.0            # count over all ticks
+    total: float = 0.0            # times this edge has been observed
     tick_count: float = 0.0       # occurrences within last_tick
-    active_ticks: int = 0         # number of distinct ticks the edge appeared in
+    active_ticks: int = 0         # distinct ticks the edge appeared in
     last_tick: int = -1
 
 
@@ -112,7 +107,6 @@ class AuthGraphConfig:
     """
 
     tick_seconds: int = 3600       # graph time resolution (1 hour)
-    min_baseline_ticks: int = 1    # warmup before burst scoring is trusted
     # Dirichlet concentration for the back-off to the global destination
     # marginal. alpha -> 0 trusts the per-source history completely (every novel
     # edge becomes infinitely surprising); alpha -> inf ignores it. 1.0 is the
@@ -256,21 +250,37 @@ class AuthGraphAnomalyDetector:
         return out
 
     # -- scoring ------------------------------------------------------------
-    def score_event_views(self, event, absorb: bool = True) -> "list[Tuple[str, float]]":
+    def score_event_views(self, event, absorb: bool = True,
+                          tick_counts: Optional[Dict] = None) -> "list[Tuple[str, float]]":
         """Return ``[(view, surprise), ...]`` for every edge this event projects.
 
         Each view is scored independently so its surprise can be calibrated
         against that view's own benign null (see engine.py): a relationship type
         with a structurally high or churny benign baseline is thereby contained
-        to its own view rather than setting the bar for every other view. Absorbs
-        each edge into the baseline unless it looks anomalous (``absorb=True``).
+        to its own view rather than setting the bar for every other view.
+
+        ``absorb`` folds each edge into the baseline unless it looks anomalous.
+
+        ``tick_counts`` carries how many times each edge has already been seen in
+        the current tick *by this caller*. Repetition is what the burst term
+        measures, and the baseline counters only advance when an edge is absorbed
+        — so a caller that scores without absorbing (batch scoring, which must
+        stay pure) has to supply this itself, or every event looks like the first
+        of its tick and the burst term can never fire. Passing a fresh mapping per
+        batch keeps scoring pure across calls while still seeing repetition within
+        one.
         """
         tick = self._tick_of(event)
         if tick is None:
             return []
         out: "list[Tuple[str, float]]" = []
         for view, edge in self.edges_for(event):
-            s = self._score_edge(view, edge, tick)
+            seen_this_tick = 0.0
+            if tick_counts is not None:
+                key = (view, edge, tick)
+                seen_this_tick = tick_counts.get(key, 0.0)
+                tick_counts[key] = seen_this_tick + 1.0
+            s = self._score_edge(view, edge, tick, seen_this_tick)
             if absorb:
                 self._absorb(view, edge, tick, s)
             out.append((view, s))
@@ -286,34 +296,17 @@ class AuthGraphAnomalyDetector:
         return max((s for _, s in self.score_event_views(event, absorb=absorb)),
                    default=0.0)
 
-    def _score_edge(self, view: str, edge: Tuple[str, str], tick: int) -> float:
-        novel = edge not in self._seen[view]
-        st = self._edges[view].get(edge)
+    def _score_edge(self, view: str, edge: Tuple[str, str], tick: int,
+                    seen_this_tick: float = 0.0) -> float:
+        """Surprise for one edge, in nats.
 
-        if self._ticks_seen < self.config.min_baseline_ticks or st is None:
-            burst = 0.0
-        else:
-            # Occurrences of this edge in the current tick, including this event.
-            a = (st.tick_count if st.last_tick == tick else 0.0) + 1.0
-            # A single occurrence is never a microcluster -- only a sudden group
-            # of the same edge in one tick (fan-out, spray, forged-ticket reuse)
-            # is. This avoids flagging benign edges that simply recur after an
-            # idle gap (e.g. a daily logon), whose per-tick mean is small.
-            if a < 2.0:
-                burst = 0.0
-            else:
-                # Mean over the ticks the edge was actually active, not over all
-                # elapsed ticks -- otherwise idle hours (nights, weekends) drag
-                # the baseline rate below 1 and a benign edge recurring 2-3x in a
-                # busy hour looks like a microcluster. A true burst is many more
-                # occurrences than the edge's normal active-hour rate.
-                # Poisson surprise of the current-tick count vs the edge's
-                # normal active-hour rate; large only for a genuine spike.
-                mean = st.total / max(st.active_ticks, 1)
-                chi = ((a - mean) ** 2) / max(mean, 1e-6)
-                burst = math.log1p(max(chi, 0.0))
-
-        return self._surprise(view, edge) + burst
+        Repetition within a tick is deliberately not scored here. A microcluster
+        term was measured against this model and removed: it cost ten detections
+        on the all-technique benchmark and 0.7 additional false-positive entities
+        a day, because benign repetition is common and a raw repeat count fires on
+        it. See docs/evaluation.md.
+        """
+        return self._surprise(view, edge)
 
     def _surprise(self, view: str, edge: Tuple[str, str]) -> float:
         """Bidirectional Dirichlet-smoothed edge surprise, in nats.

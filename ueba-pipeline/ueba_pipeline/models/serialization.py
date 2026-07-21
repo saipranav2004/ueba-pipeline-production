@@ -114,7 +114,6 @@ def graph_to_state(graph) -> dict:
     return {
         "config": {
             "tick_seconds": cfg.tick_seconds,
-            "min_baseline_ticks": cfg.min_baseline_ticks,
             "alpha": cfg.alpha,
             "absorb_surprise": cfg.absorb_surprise,
         },

@@ -9,7 +9,7 @@ and directory-object change -- per event, as
 Dirichlet-smoothed edge surprise across several independently calibrated
 relationship views.
 
-Measured on the honest all-technique benchmark: 51/60 = 85.0% recall at 3.33
+Measured on the honest all-technique benchmark: 53/60 = 88.3% recall at 3.31
 false-positive entities/day (6 seeds, contamination=none). Reproduce with
 `walk-forward-eval`; see docs/evaluation.md.
 
@@ -115,7 +115,9 @@ class WindowDetection:
     entity: str
     hour: datetime
     graph_p: float = 1.0        # smallest per-view p-value in this (entity, hour)
-    n_graph_tests: int = 0
+    # Distinct (view, edge) pairs examined in this cell. This is the number of
+    # hypotheses the Sidak correction answers for; see _score_graph_event.
+    tested_edges: set = field(default_factory=set)
 
     @property
     def p(self) -> float:
@@ -123,13 +125,20 @@ class WindowDetection:
 
         Many homogeneous tests within the hour, where we expect ONE to be
         anomalous -> Tippett (min-p with a Sidak correction for the number of
-        tests). Fisher would be wrong here: it adds 2 df per test, so a single
-        severe event among 500 benign ones in the same hour dilutes below
-        significance (Birnbaum 1954; Heard & Rubin-Delanchy 2018).
+        DISTINCT relationships examined). Fisher would be wrong here: it adds 2 df
+        per test, so a single severe event among 500 benign ones in the same hour
+        dilutes below significance (Birnbaum 1954; Heard & Rubin-Delanchy 2018).
+
+        The correction counts distinct relationships rather than events because
+        Sidak answers "how many hypotheses did I examine". Observing one edge a
+        hundred times examines one hypothesis a hundred times, and charging a
+        hundred tests for it would penalise an entity for being busy -- which is
+        exactly backwards when volume over an established relationship is itself
+        the signal.
         """
         if self.graph_p >= 1.0:
             return 1.0
-        return sidak(self.graph_p, max(self.n_graph_tests, 1))
+        return sidak(self.graph_p, max(len(self.tested_edges), 1))
 
     @property
     def risk(self) -> float:
@@ -249,13 +258,17 @@ class BehavioralEngine:
 
         by_view: Dict[str, list] = {}
         novelty: Dict[str, list] = {}          # view -> [edges_scored, edges_novel]
+        # The null must be measured with the same burst behaviour scoring uses,
+        # or it describes a different statistic from the one being scored.
+        calib_ticks: Dict = {}
         for e in calib_evs:
             for view, edge in self.graph.edges_for(e):
                 st = novelty.setdefault(view, [0, 0])
                 st[0] += 1
                 if edge not in self.graph._seen[view]:
                     st[1] += 1
-            for view, s in self.graph.score_event_views(e, absorb=False):
+            for view, s in self.graph.score_event_views(
+                    e, absorb=False, tick_counts=calib_ticks):
                 by_view.setdefault(view, []).append(s)
         self._graph_nulls = {
             view: EmpiricalPValue().fit(np.asarray(scores))
@@ -290,8 +303,10 @@ class BehavioralEngine:
         # silently misattribute months later.
         sessions = SessionResolver().fit(events, _norm)
         cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+        tick_counts: Dict = {}
         for e in _time_sorted_graph_events(events):
-            self._score_graph_event(e, cell, absorb=False, sessions=sessions)
+            self._score_graph_event(e, cell, absorb=False, sessions=sessions,
+                                     tick_counts=tick_counts)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
         hours = [d.hour for d in detections] or [h for _, h in observed]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
@@ -367,7 +382,8 @@ class BehavioralEngine:
         return host or "endpoint"
 
     def _score_graph_event(self, e, cell: Dict, absorb: bool,
-                           sessions: Optional[SessionResolver] = None) -> None:
+                           sessions: Optional[SessionResolver] = None,
+                           tick_counts: Optional[Dict] = None) -> None:
         if not self._graph_nulls:
             return
         # Score each view against its own frozen null, then take the most
@@ -375,7 +391,11 @@ class BehavioralEngine:
         # that produced evidence. A view unseen in training has no null and
         # contributes no evidence (p = 1.0) rather than a spurious extreme.
         ps = []
-        for view, s in self.graph.score_event_views(e, absorb=absorb):
+        tested_edges = []
+        for view, edge in self.graph.edges_for(e):
+            tested_edges.append((view, edge))
+        for view, s in self.graph.score_event_views(
+                e, absorb=absorb, tick_counts=tick_counts):
             null = self._graph_nulls.get(view)
             if null is not None:
                 ps.append(float(null.pvalue(s)[0]))
@@ -384,7 +404,12 @@ class BehavioralEngine:
         p = sidak(min(ps), len(ps))
         entity = self._entity_for(e, sessions)
         d = self._cell(cell, entity, _floor_hour(e.event_time))
-        d.n_graph_tests += 1
+        # The correction counts DISTINCT relationships tested in this hour, not
+        # events. Re-observing one edge is one hypothesis examined repeatedly, not
+        # a new hypothesis: counting events would make an entity progressively
+        # harder to alert on the more it does, so a high-volume abuse of a single
+        # established relationship would suppress its own significance.
+        d.tested_edges.update(tested_edges)
         d.graph_p = min(d.graph_p, p)
 
     # -- rollup / alerting -------------------------------------------------

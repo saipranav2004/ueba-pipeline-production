@@ -682,6 +682,66 @@ def inject_account_manipulation(
     return events, label
 
 
+def inject_insider_data_staging(
+    roster: List[Employee],
+    bus: EventBus,
+    sim_date: date,
+    rng: random.Random,
+) -> Tuple[InjectedEvents, AttackLabel]:
+    """An authorised user collecting data at far above their normal rate.
+
+    This is the threat class the credential-theft techniques do not cover:
+    insider abuse, credential misuse and privilege abuse all look like a
+    legitimate identity using a legitimate path. Nothing here is novel -- the
+    account, the workstation and the file server are the ones this person uses
+    every day, and every ticket request succeeds. What is abnormal is only the
+    *rate*: a burst of service-ticket requests against their own file server,
+    far above the one or two a normal session produces.
+
+    A detector that recognises this cannot be relying on relationship novelty,
+    because there is no new relationship to see. That is precisely why the
+    scenario belongs in the benchmark: without it, nothing measures whether the
+    engine can separate abuse-of-access from theft-of-access.
+    """
+    actor = rng.choice(roster)
+    # Their own file server, over their own established path.
+    server = "FS01"
+    spn, spn_sid = _CIFS_SPNS.get(
+        server, (f"cifs/{server}.nexovate.local",
+                 "S-1-5-21-1484628597-1684816888-3125425894-1099"))
+
+    # During working hours: an insider does this while their access is expected.
+    start_hour = rng.uniform(10.0, 16.0)
+    start_ts = local_to_utc(_float_hour_to_datetime(sim_date, start_hour))
+    src_ip = actor.workstation_ip
+
+    events: InjectedEvents = []
+    ts = start_ts
+    n_requests = rng.randint(60, 140)
+    for _ in range(n_requests):
+        ts = ts + timedelta(seconds=rng.uniform(1.0, 8.0))
+        events.append(("security", ts,
+                        gen_4769(actor.samaccountname, spn, spn_sid, src_ip, ts, bus)))
+
+    label = AttackLabel(
+        attack_type="insider_data_staging",
+        mitre_technique="T1005",
+        start_time=utc_now_str(start_ts),
+        end_time=utc_now_str(ts),
+        target_users=[actor.samaccountname],
+        source_ip=src_ip,
+        details={
+            "actor": actor.samaccountname,
+            "service_ticket_requests": n_requests,
+            "signature": f"{n_requests} service-ticket requests for {server} from "
+                         f"{actor.samaccountname}'s own workstation within "
+                         f"{(ts - start_ts).total_seconds() / 60:.0f} minutes; every "
+                         "relationship involved is one the account already had",
+        },
+    )
+    return events, label
+
+
 ATTACK_REGISTRY = {
     "pass_the_hash": inject_pass_the_hash,
     "kerberoasting": inject_kerberoasting,
@@ -693,4 +753,5 @@ ATTACK_REGISTRY = {
     "silver_ticket": inject_silver_ticket,
     "ntds_dump": inject_ntds_dump,
     "account_manipulation": inject_account_manipulation,
+    "insider_data_staging": inject_insider_data_staging,
 }

@@ -40,7 +40,7 @@ def test_window_detection_cell_p_is_tippett_corrected():
     """The cell p is Tippett (min-p, Sidak-corrected for the number of tests over
     calibrated p-values), so one severe test dominates and many mild tests cannot
     gang up. See docs/evaluation.md."""
-    d = WindowDetection("u", datetime(2025, 1, 1), graph_p=1e-4, n_graph_tests=1)
+    d = WindowDetection("u", datetime(2025, 1, 1), graph_p=1e-4, tested_edges={("v", ("a", "b"))})
     assert 0.0 < d.p < 1e-3          # one severe test dominates
     assert d.risk == pytest.approx(1.0 - d.p)
     quiet = WindowDetection("u", datetime(2025, 1, 1))
@@ -65,7 +65,7 @@ def test_rollup_is_sidak_corrected_not_accumulating():
     how many hours were tested, so an entity watched for longer does not become
     suspicious merely by being watched."""
     eng = BehavioralEngine()
-    mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4, n_graph_tests=1)
+    mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4, tested_edges={("v", ("a", "b"))})
             for h in range(24)]
     risks = eng._rollup(mild, observed_days=1.0)
     assert risks[0].p_value > 0.05, "24 mild hours must not become significant"
@@ -73,7 +73,7 @@ def test_rollup_is_sidak_corrected_not_accumulating():
 
 def test_alerts_respect_the_analyst_budget():
     eng = BehavioralEngine(config=EngineConfig(alert_mode="budget", alert_budget_per_day=2.0))
-    ds = [WindowDetection(f"u{i}", datetime(2025, 1, 1, 1), graph_p=10.0 ** -(11 - i), n_graph_tests=1)
+    ds = [WindowDetection(f"u{i}", datetime(2025, 1, 1, 1), graph_p=10.0 ** -(11 - i), tested_edges={("v", ("a", "b"))})
           for i in range(10)]
     risks = eng._rollup(ds, observed_days=1.0)
     assert len(eng.alerts(risks)) == 2

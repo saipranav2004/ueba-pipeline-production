@@ -36,11 +36,11 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **51/60 = 85.0%** | **3.33** |
+| **engine** | **53/60 = 88.3%** | **3.31** |
 
-Per-technique: DCSync `8/8`, silver ticket `8/8`, Pass-the-Hash `8/9`, AS-REP
-roasting `6/6`, password spray `6/6`, Kerberoasting `6/8`, golden ticket `4/4`,
-LSASS dump `4/4`, account manipulation `1/5`, NTDS dump `0/2`.
+Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
+Pass-the-Hash `8/9`, AS-REP roasting `6/6`, password spray `6/6`, golden ticket
+`4/4`, LSASS dump `4/4`, account manipulation `1/5`, NTDS dump `0/2`.
 
 **These are simulator numbers.** Read [docs/evaluation.md](docs/evaluation.md)
 before quoting them: the estate is self-generated, and no detection-performance
@@ -143,6 +143,9 @@ comparison harness, and real-telemetry ingestion validation.
 - **Account manipulation (1/5) and NTDS dump (0/2)** are evidence limits on this
   estate, not tuning failures — both live in views too sparse to assert
   significance from.
+- **Volume abuse over an established relationship is not detected** (1/9 on an
+  insider data-staging corpus). Relational novelty is the wrong instrument for a
+  threat that creates no new relationship; see [docs/evaluation.md](docs/evaluation.md).
 - **Scale above ~300 entities is unmeasured.** O(1) counter updates predict it
   holds; that is a prediction.
 - **No multi-tenancy, RBAC, or API.** The product is a CLI.

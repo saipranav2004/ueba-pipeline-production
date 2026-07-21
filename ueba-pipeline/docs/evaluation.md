@@ -23,17 +23,17 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **51/60 = 85.0%** | **3.33** |
+| **engine** | **53/60 = 88.3%** | **3.31** |
 
 | technique | recall | | technique | recall |
 |---|---|---|---|---|
-| AS-REP roasting | 6/6 | | DCSync | 8/8 |
-| password spray | 6/6 | | silver ticket | 8/8 |
-| golden ticket | 4/4 | | Pass-the-Hash | 8/9 |
-| LSASS dump | 4/4 | | Kerberoasting | 6/8 |
+| DCSync | 8/8 | | AS-REP roasting | 6/6 |
+| Kerberoasting | 8/8 | | password spray | 6/6 |
+| silver ticket | 8/8 | | golden ticket | 4/4 |
+| Pass-the-Hash | 8/9 | | LSASS dump | 4/4 |
 | account manipulation | 1/5 | | NTDS dump | 0/2 |
 
-The per-technique split varies with attack placement across seeds; the 51/60 total
+The per-technique split varies with attack placement across seeds; the 53/60 total
 is stable and reproduces on an independent six-seed set. The contamination guard
 makes no measurable difference (`oracle` ≡ `none`).
 
@@ -135,10 +135,10 @@ Every component is held to measured contribution.
 
 | component | evidence | verdict |
 |---|---|---|
-| edge surprise | 51/60; carries the product | keep |
+| edge surprise | 53/60; carries the product | keep |
 | per-view null calibration | without it, high-baseline views (`proc_access` ~5.5 nats benign) set the bar for low-baseline views (`user_src` ~0.29) | keep |
 | `tgs_enc` view | Kerberoasting 6/8; 0 without it | keep |
-| MIDAS burst term | surfaces fan-out / spray / rapid reuse | keep |
+| MIDAS burst term | cost 10 detections and 0.7 FP/day once it could actually fire | **removed** |
 | host→user session attribution | one entity space for alerting | keep |
 | `dir_op` view | keyed on operation class (9.1% benign novelty) not object touched (72%) | keep |
 | volumetric (ECOD) track | 15/60 alone; fused 29/60 at 3.88 FP/day against 43/60 at 3.46 for the detector alone | **removed** |
@@ -223,6 +223,64 @@ null floors near `1/(n+1) ≈ 0.045` and it can rarely assert significance — y
 reaches 13/60 alone at only 0.71 FP/day, and it is the only view reading directory
 operations. A longer baseline resolves the floor; deleting the view would make
 directory attacks permanently invisible.
+
+## The multiple-testing correction counts relationships, not events
+
+Šidák answers "how many hypotheses did I examine". The correction originally
+counted *events* scored in an (entity, hour) cell, which is not the same thing:
+observing one relationship a hundred times examines one hypothesis a hundred
+times. Counting events made an entity progressively harder to alert on the more
+it did — and that is exactly backwards when volume over an established
+relationship is itself the signal.
+
+Correcting for distinct `(view, edge)` pairs instead moved the benchmark from
+51/60 at 3.33 FP/day to **53/60 at 3.31**, with Kerberoasting reaching 8/8. It is
+both the more defensible statistic and the better-measuring one.
+
+## A microcluster term was measured and removed
+
+The detector carried a MIDAS-style burst term: a chi-squared surprise between an
+edge's current-tick count and its running mean, intended to catch fan-out, spray
+and rapid credential reuse.
+
+It never fired on the shipped path. Per-tick counters advance only when an edge is
+*absorbed* into the baseline, and batch `score()` deliberately never absorbs, so
+every event looked like the first of its tick. This is why sweeping
+`tick_seconds` across a 24× range moved nothing.
+
+Wiring it to the pure path so it could fire produced a clear verdict:
+
+| burst term | all-technique benchmark | insider corpus |
+|---|---|---|
+| **removed (shipped)** | **53/60 at 3.31 FP/day** | 1/9 |
+| active | 43/60 at 4.00 FP/day | 6/9 |
+
+It buys five insider detections for ten elsewhere and 0.7 additional
+false-positive entities a day, because benign repetition is ordinary and a raw
+repeat count fires on it. Removed.
+
+## Open capability: volume abuse over an established relationship
+
+The benchmark's ten techniques are all credential theft or lateral movement —
+each one creates a relationship the identity did not have. Insider abuse,
+credential misuse and privilege abuse do the opposite: a legitimate account uses
+its own workstation against its own file server, and only the *rate* is wrong.
+
+`insider_data_staging` (T1005) was added to the simulator to measure this: 60–140
+service-ticket requests for the account's own file server, in working hours, from
+its own workstation, every one succeeding. Nothing about it is novel.
+
+**The engine detects 1/9.** That is an honest negative result, and the diagnosis is
+specific rather than vague: the relational model scores the abuse strongly — the
+surprise reaches 15.27 nats at p = 0.00123 — but relational novelty is the wrong
+instrument for a threat that creates no new relationship, and the burst term that
+would have caught it costs more elsewhere than it returns.
+
+The direction this points to is a **separately calibrated volume view**: per-edge
+rate, carried as its own view with its own null and combined by Tippett like every
+other, rather than added into the surprise where it shares a null with novelty and
+cannot be calibrated independently. That is a design change, not a tuning one, and
+it is not attempted here on the strength of one synthetic corpus.
 
 ## Parameter sensitivity
 
