@@ -95,6 +95,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | evaluation methodology, results, and limitations | [docs/evaluation.md](docs/evaluation.md) |
 | classical models compared under disjoint splits | [docs/model_comparison.md](docs/model_comparison.md) |
 | public datasets and real-data validation | [docs/datasets.md](docs/datasets.md) |
+| running it, containers, scaling, operations | [docs/deployment.md](docs/deployment.md) |
 
 ## Layout
 
@@ -115,9 +116,9 @@ ueba_pipeline/
   evaluation/model_benchmark.py classical-model comparison + split protocols
   evaluation/otrf_adapter.py    real Windows/Sysmon telemetry ingestion
   monitoring/drift.py           capability-drift detection
-  ingestion/, connectors/, config/, cli/
+  ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     112 tests
+tests/unit/                     107 tests
 ```
 
 ## Model persistence

@@ -1,50 +1,45 @@
-# UNVERIFIED — see docker/Dockerfile header. `docker compose up` has not
-# been run against this file in this environment (no Docker daemon
-# available here — confirmed, not assumed).
+# Local development stack: the CLI image plus a single-node Kafka broker.
 #
-# The Kafka service is included because the task requires designing for
-# real-time ingestion from the start, per ARCHITECTURE.md §10 and
-# ingestion/source.py's KafkaEventSource. That consumer is fully
-# implemented (confluent-kafka, manual-commit at-least-once, EOF-aware
-# batch/replay mode) and exercised end-to-end against a trained bundle via
-# the `score-stream` CLI. What remains genuinely infra-blocked is measuring
-# throughput/latency/back-pressure and confirming at-least-once semantics
-# under load against a LIVE broker: the detection logic is broker-
-# independent and validated, but no Kafka cluster is reachable in the build
-# sandbox. Standing the broker up here means that validation can run the
-# moment a real environment is available, with no further code work.
+# NOT VERIFIED BY EXECUTION. No Docker daemon is reachable in the environment
+# this was authored in, so `docker compose up` has not been run against it. The
+# YAML is schema-valid and the Kafka settings follow the documented single-node
+# KRaft pattern for the official apache/kafka image, but treat first use as a
+# bring-up rather than a regression.
 #
-# Kafka image/config follows the current (2026) documented pattern for
-# single-node KRaft mode (no ZooKeeper) using the official apache/kafka
-# image — verified against multiple independent 2025/2026 sources during
-# Phase 1 research, not copied from a single blog post.
+# The Kafka service exists because ingestion/source.py ships a real
+# KafkaEventSource (confluent-kafka, manual-commit at-least-once, EOF-aware
+# replay) which the unit suite exercises against a mock. What a mock cannot
+# establish -- real offset-commit semantics, throughput, back-pressure under
+# load -- is what this broker is for; scripts/validate_streaming.py is the
+# harness that measures it once a broker is reachable.
 
 services:
   ueba-pipeline:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ueba-pipeline:phase1
+    image: ueba-pipeline:dev
     volumes:
       - model-artifacts:/app/artifacts
       - ../enterprise_simulator/output:/app/data:ro
     environment:
       - UEBA__MODEL_STORE_PATH=/app/artifacts/models
+      # Required: the engine refuses to sign or load a bundle without it.
+      - UEBA__SECURITY__MODEL_SIGNING_KEY=${UEBA__SECURITY__MODEL_SIGNING_KEY:?set this to 32+ random bytes}
     depends_on:
       kafka:
         condition: service_healthy
-    # No default long-running command yet — this image is a CLI
-    # (`train`/`score`), not a daemon. A real-time scoring daemon is a
-    # Phase 2+ deliverable once KafkaEventSource is implemented; until
-    # then this service is invoked via `docker compose run ueba-pipeline
-    # train --data-dir /app/data --roster /app/data/roster.json`.
+    # This image is a CLI, not a daemon, so it has no long-running command.
+    # Invoke it as:
+    #   docker compose run ueba-pipeline train \
+    #       --data-dir /app/data --model-dir /app/artifacts/models/engine
     command: ["--help"]
 
   kafka:
-    # SECURITY (AUDIT finding #7): these listeners are PLAINTEXT and this
-    # file is the LOCAL DEV loop ONLY -- it must never carry real identity/
-    # security telemetry on an untrusted network. For any shared or
-    # production broker use docker-compose.prod.yml (SASL_SSL + mTLS).
+    # SECURITY: these listeners are PLAINTEXT and this file is the LOCAL DEV
+    # loop ONLY. It must never carry real identity or security telemetry on an
+    # untrusted network. For any shared or production broker use
+    # docker-compose.prod.yml, which requires SASL_SSL and mTLS.
     image: apache/kafka:latest
     hostname: kafka
     ports:
@@ -70,41 +65,6 @@ services:
       retries: 10
       start_period: 30s
 
-  # Scale-out graph backend (identity_graph.backend = "memgraph"). Optional in
-  # the same sense Kafka is: file/NetworkX paths need none of this. Included so
-  # the Memgraph backend (graph/memgraph_backend.py, neo4j Bolt driver + MAGE
-  # PageRank / community_detection / betweenness) can be validated end-to-end
-  # against a real engine the moment this env is available. Image/ports/
-  # healthcheck follow Memgraph's current (2026) documented single-node MAGE
-  # pattern: memgraph/memgraph-mage on Bolt 7687 (+ 7444 for Lab log streaming),
-  # readiness probed with a trivial Cypher round-trip via mgconsole.
-  #
-  # SECURITY: this dev instance runs with no auth (blank MEMGRAPH_USER) and is
-  # for the LOCAL loop only. A shared/production Memgraph must set
-  # MEMGRAPH_USER/MEMGRAPH_PASSWORD (the backend reads memgraph_user/
-  # memgraph_password from config, the latter a masked SecretStr) and terminate
-  # Bolt over TLS. To point the pipeline at this service, set
-  # UEBA__IDENTITY_GRAPH__BACKEND=memgraph and
-  # UEBA__IDENTITY_GRAPH__MEMGRAPH_URI=bolt://memgraph:7687.
-  memgraph:
-    image: memgraph/memgraph-mage:latest
-    hostname: memgraph
-    ports:
-      - "7687:7687"
-      - "7444:7444"
-    command: ["--log-level=TRACE"]
-    volumes:
-      - memgraph-data:/var/lib/memgraph
-      - memgraph-log:/var/log/memgraph
-    healthcheck:
-      test: ["CMD-SHELL", "echo 'RETURN 0;' | mgconsole || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-
 volumes:
   model-artifacts:
   kafka-data:
-  memgraph-data:
-  memgraph-log:

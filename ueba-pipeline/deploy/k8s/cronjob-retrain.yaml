@@ -43,16 +43,15 @@ spec:
               type: RuntimeDefault
           containers:
             - name: ueba-train
-              image: ueba-pipeline:phase1  # placeholder — not a real registry ref
+              image: ueba-pipeline:dev  # replace with a real registry reference
               command: ["python3", "-m", "ueba_pipeline.cli.main", "train"]
               args:
                 - "--data-dir=/data"
-                - "--roster=/data/roster.json"
+                - "--model-dir=/artifacts/models/engine"
               env:
-                # AUDIT finding #7: inject the model signing key. Without it,
-                # ModelStore(require_signed_bundles=True) raises on first run and
-                # the job never persists a bundle. Provisioned from an external
-                # vault via External Secrets Operator -- see
+                # The signing key is required: without it the engine refuses to
+                # sign a bundle and the job persists nothing. Provisioned from an
+                # external vault via External Secrets Operator -- see
                 # secret-signing-key.example.yaml.
                 - name: UEBA__SECURITY__MODEL_SIGNING_KEY
                   valueFrom:

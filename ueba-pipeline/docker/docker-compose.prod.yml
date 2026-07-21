@@ -1,4 +1,4 @@
-# Production hardening overlay for the Kafka broker (AUDIT finding #7).
+# Production hardening overlay for the Kafka broker.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 #
