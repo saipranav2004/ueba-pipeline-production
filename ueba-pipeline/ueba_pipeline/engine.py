@@ -4,12 +4,12 @@ ARCHITECTURE
 ------------
 One detector (:class:`AuthGraphAnomalyDetector`) emitting a **calibrated
 p-value** against a frozen benign null. It scores relational anomalies -- lateral
-movement, credential-forgery reuse, credential-store access, rare process
-novelty, ticket downgrade, and directory-object change -- per event, as
+movement, credential-forgery reuse, credential-store access, ticket downgrade,
+and directory-object change -- per event, as
 Dirichlet-smoothed edge surprise across several independently calibrated
 relationship views.
 
-Measured on the honest all-technique benchmark: 46/60 = 76.7% recall at 3.37
+Measured on the honest all-technique benchmark: 51/60 = 85.0% recall at 3.33
 false-positive entities/day (6 seeds, contamination=none). Reproduce with
 `walk-forward-eval`; see docs/evaluation.md.
 

@@ -44,12 +44,6 @@ REMOTE_LOGON_TYPES = {"3", "10"}
 
 
 
-# A process image seen on at most this many hosts in the baseline is "rare";
-# its appearance on a new host is a rare-process-execution signal (ntdsutil /
-# vssadmin during NTDS.dit extraction). Ubiquitous images exceed this and are
-# never projected, so the high-volume process-create stream stays tractable.
-RARE_PROC_MAX_HOSTS = 3
-
 # Event id -> privileged directory-operation class, for the dir_op view. This is
 # the extension point for directory coverage: a new operation is a row here, not a
 # new code path. Classes are deliberately coarse and low-cardinality -- the view
@@ -156,16 +150,11 @@ class AuthGraphAnomalyDetector:
     # novelty for views where entities have a dense baseline: a *change* for a
     # known entity is meaningful, its first-ever appearance is not.
     _principals: Dict[str, set] = field(default_factory=lambda: defaultdict(set))
-    # Baseline host fan-out per process image basename, for rare-process
-    # novelty: a process that runs on very few hosts (ntdsutil, vssadmin) is a
-    # credential-theft tool when it appears somewhere new; a ubiquitous process
-    # (chrome, excel) is not. Populated from Sysmon 1 during baseline.
-    _img_hosts: Dict[str, set] = field(default_factory=lambda: defaultdict(set))
     # Sufficient statistics for the Dirichlet-smoothed conditional
     # P(dst | src) = (c_sd + alpha * pi_d) / (n_s + alpha).
     # All three are plain counters: O(1) update, streaming-safe, no retraining.
-    # NOTE: plain dicts, not defaultdict(lambda: ...) -- a nested lambda default
-    # factory is unpicklable, and the whole engine is persisted with pickle.
+    # Plain dicts rather than a nested defaultdict, so the state serialises to an
+    # explicit schema without a factory the loader would have to reconstruct.
     _dst_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
     _src_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
     _src_totals: Dict[str, Dict[str, float]] = field(default_factory=dict)
@@ -186,8 +175,6 @@ class AuthGraphAnomalyDetector:
         Views scored independently:
           - ``user_src``: an account authenticating from a host/IP it has never
             used -- forged-ticket / PtH from an attacker foothold.
-          - ``src_dst``:  a source reaching a destination it never has --
-            host-to-host lateral movement.
           - ``proc_access``: a process accessing another process it never has
             on this host -- credential-store dumping (e.g. lsass) shows up as a
             novel process-access edge; the access mask / target is not
@@ -209,8 +196,6 @@ class AuthGraphAnomalyDetector:
             dst = _norm(event.computer_name)
             if user and src:
                 out.append(("user_src", (user, src)))
-            if src and dst and src != dst:
-                out.append(("src_dst", (src, dst)))
         elif et.startswith("sysmon_10"):
             # Generic: novelty of ANY (source-process -> target-process) access
             # edge for this host. No attack-specific target list -- a process
@@ -265,11 +250,6 @@ class AuthGraphAnomalyDetector:
             actor = _norm(f.get("subject_user_name"))
             if actor and not actor.endswith("$"):
                 out.append(("dir_op", (actor, DIR_OP_CLASS[et])))
-        elif et.startswith("sysmon_1") and not et.startswith("sysmon_10"):
-            image = _basename(f.get("image"))
-            host = _norm(event.computer_name)
-            if image and host and len(self._img_hosts.get(image, ())) <= RARE_PROC_MAX_HOSTS:
-                out.append(("rare_proc", (host, image)))
         enabled = self.config.enabled_views
         if enabled is not None:
             out = [(view, edge) for view, edge in out if view in enabled]
@@ -414,11 +394,6 @@ class AuthGraphAnomalyDetector:
         tick = self._tick_of(event)
         if tick is None:
             return
-        if event.event_type.startswith("sysmon_1") and not event.event_type.startswith("sysmon_10"):
-            img = _basename(event.fields.get("image"))
-            host = _norm(event.computer_name)
-            if img and host:
-                self._img_hosts[img].add(host)
         # Delegate to _absorb: one implementation of the baseline update, so a
         # change to the sufficient statistics cannot miss this path.
         for view, edge in self.edges_for(event):

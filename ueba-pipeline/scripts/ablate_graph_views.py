@@ -32,8 +32,7 @@ from ueba_pipeline.evaluation.honest_eval import _evaluate_detections, _load
 from ueba_pipeline.features import observed_entity_windows
 from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector, AuthGraphConfig
 
-ALL_VIEWS = ("user_src", "src_dst", "proc_access", "rare_proc",
-             "kerb_ctx", "tgs_enc", "dir_op")
+ALL_VIEWS = ("user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op")
 
 
 def run_estate(data_dir: str, views, train_fraction: float = 0.60):

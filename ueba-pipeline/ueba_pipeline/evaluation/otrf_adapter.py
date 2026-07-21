@@ -88,7 +88,7 @@ OTRF_DATASETS: List[OTRFDataset] = [
     OTRFDataset(
         "ntds_ntdsutil", "credential_access/host/"
         "cmd_dumping_ntds_dit_file_ntdsutil.zip",
-        "credential_access", "T1003.003", ("proc_access", "rare_proc"),
+        "credential_access", "T1003.003", ("proc_access",),
         "NTDS.dit extraction via ntdsutil; heavy real Sysmon-10 process-access "
         "telemetry.",
     ),
@@ -101,12 +101,12 @@ OTRF_DATASETS: List[OTRFDataset] = [
     ),
     OTRFDataset(
         "pth_lsass", "credential_access/host/empire_over_pth_patch_lsass.zip",
-        "credential_access", "T1550.002", ("user_src", "src_dst", "proc_access"),
+        "credential_access", "T1550.002", ("user_src", "proc_access"),
         "Over-Pass-the-Hash patching LSASS; remote-logon and process-access edges.",
     ),
     OTRFDataset(
         "rubeus_ptt", "credential_access/host/empire_shell_rubeus_asktgt_ptt.zip",
-        "credential_access", "T1550.003", ("user_src", "src_dst", "proc_access"),
+        "credential_access", "T1550.003", ("user_src", "proc_access"),
         "Rubeus asktgt Pass-the-Ticket; Kerberos ticket request plus auth edges.",
     ),
 ]

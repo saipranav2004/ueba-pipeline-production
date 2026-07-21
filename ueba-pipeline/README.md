@@ -13,9 +13,9 @@ feature contract, and a test fails if any of them reaches a model.
 ## How it works
 
 Every event is projected onto directed edges across several relationship views —
-account↔source, host↔host, ticket-encryption context, process-access,
-rare-process, directory-operation — and each edge is scored for surprise under
-the estate's learned access distribution:
+account↔source, ticket-encryption context, Kerberos context, process-access,
+directory-operation — and each edge is scored for surprise under the estate's
+learned access distribution:
 
 ```
 surprise = max( −log P(dst | src), −log P(src | dst) )
@@ -36,11 +36,11 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **46/60 = 76.7%** | **3.37** |
+| **engine** | **51/60 = 85.0%** | **3.33** |
 
-Per-technique: AS-REP roasting `6/6`, password spray `6/6`, golden ticket `4/4`,
-LSASS dump `4/4`, DCSync `7/8`, Pass-the-Hash `7/9`, Kerberoasting `6/8`, silver
-ticket `5/8`, account manipulation `1/5`, NTDS dump `0/2`.
+Per-technique: DCSync `8/8`, silver ticket `8/8`, Pass-the-Hash `8/9`, AS-REP
+roasting `6/6`, password spray `6/6`, Kerberoasting `6/8`, golden ticket `4/4`,
+LSASS dump `4/4`, account manipulation `1/5`, NTDS dump `0/2`.
 
 **These are simulator numbers.** Read [docs/evaluation.md](docs/evaluation.md)
 before quoting them: the estate is self-generated, and no detection-performance

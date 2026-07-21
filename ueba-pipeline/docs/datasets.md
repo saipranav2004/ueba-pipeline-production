@@ -122,10 +122,10 @@ projects its expected behavioural graph view:
 | dataset | technique | records | parsed | mapped | key behavioural view |
 |---|---|---|---|---|---|
 | dcsync | T1003.006 | 869 | 100% | 289 | `dir_op` edge `(pgustavo → adobjaccess)` |
-| ntds_ntdsutil | T1003.003 | 11,184 | 100% | 8,161 | `proc_access` ×7,495, `rare_proc` ×96 |
+| ntds_ntdsutil | T1003.003 | 11,184 | 100% | 8,161 | `proc_access` ×7,495 |
 | lsass_comsvcs | T1003.001 | 184 | 100% | 101 | `proc_access` ×68 |
-| pth_lsass | T1550.002 | 10,271 | 100% | 4,387 | `user_src`/`src_dst`/`proc_access` |
-| rubeus_ptt | T1550.003 | 1,179 | 100% | 490 | `user_src`/`src_dst`/`proc_access` |
+| pth_lsass | T1550.002 | 10,271 | 100% | 4,387 | `user_src` / `proc_access` |
+| rubeus_ptt | T1550.003 | 1,179 | 100% | 490 | `user_src` / `proc_access` |
 
 Every curated dataset ingests fully and projects its expected view. The DCSync
 capture is the sharpest result: the real 4662 carries the Replicating-Directory-

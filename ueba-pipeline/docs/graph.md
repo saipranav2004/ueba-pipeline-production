@@ -45,18 +45,16 @@ gate, the engine would be a rule catalogue wearing a model's clothes.
 | view | edge `(src → dst)` | source events |
 |---|---|---|
 | `user_src` | account → source host/IP | 4624/4625 remote logons (type 3/10) |
-| `src_dst` | source host → destination host | 4624/4625 remote logons |
 | `kerb_ctx` | account → TGT encryption\|pre-auth context | 4768 |
 | `tgs_enc` | account → service-ticket encryption type | 4769 |
 | `proc_access` | `host\|source-image` → target-image | Sysmon 10 (ProcessAccess) |
-| `rare_proc` | host → image (image on ≤ `RARE_PROC_MAX_HOSTS` baseline hosts) | Sysmon 1 |
-| `dir_change` | actor → `group:`/`adobj:`/`attr:` | 4728/4732/4756, 4662, 5136 |
+| `dir_op` | actor → operation class | 4728/4732/4756, 4720/4726, 4662, 5136 |
 
 `tgs_enc` keys on the ticket **encryption type** (a handful of values), not the
 service name: keying on the SPN floods the model with benign service diversity;
 the low-cardinality cipher is the generalized ticket-downgrade signal.
 
-`dir_change` projects directory operations onto `(actor → object)` edges — a
+`dir_op` projects directory operations onto `(actor → operation class)` edges — a
 group-membership add, an AD object access, an attribute modification — attributed
 to the acting principal (`SubjectUserName`), with machine accounts excluded. A
 first-ever add to a rarely-touched group, or a non-machine account touching the
@@ -117,3 +115,24 @@ Backend: NetworkX in-memory by default (a few thousand nodes, snapshot recompute
 under a second). Betweenness falls back to pivot
 sampling (Brandes & Pich, 2007) above `betweenness_exact_max_nodes`, since exact
 Brandes is O(V·E) and unusable past ~10k nodes.
+
+## Views that were removed
+
+Two views were dropped after `scripts/ablate_graph_views.py` measured their
+contribution across six seeds; both removals raised recall and lowered false
+positives. Every view added to a cell costs a Šidák test on that cell, and Šidák
+assumes independence, so a view correlated with another is penalised twice — for
+adding no independent evidence, and for inflating the correction on the view that
+did.
+
+- **`src_dst`** (source host → destination host) read the same 4624 events as
+  `user_src` and was strongly correlated with it. Capable alone (29/60) but
+  redundant in combination: dropping it gained 5 detections. It stays selectable
+  through `AuthGraphConfig.enabled_views` for telemetry with no usable device
+  identity, which is the setting where it is the richest relation available.
+- **`rare_proc`** (host → rarely-seen image) detected nothing in any measured
+  configuration across two estate revisions — 0/60 standalone, no change when
+  dropped.
+
+See [evaluation.md](evaluation.md) for the full per-view table and the reasoning
+behind the views that were retained despite a neutral or positive drop-delta.

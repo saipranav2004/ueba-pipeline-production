@@ -170,22 +170,3 @@ def test_kerb_context_downgrade_is_scored_by_evidence_not_a_gate():
         "first ticket -- from the evidence, not a hardcoded view gate"
     )
 
-def test_rare_process_on_new_host_flags_ntds_tools():
-    det = AuthGraphAnomalyDetector()
-    # ntdsutil runs once on DC01 in baseline (rare: 1 host).
-    det.observe_baseline(_proc("C:/Windows/System32/ntdsutil.exe", host="dc01", minute=0))
-    # Common process runs everywhere (not rare).
-    for i in range(20):
-        det.observe_baseline(_proc("C:/Windows/explorer.exe", host=f"ws{i}", minute=i))
-    # ntdsutil appearing on a new host -> rare-process novelty.
-    s = det.score_event(_proc("C:/Windows/System32/ntdsutil.exe", host="dc02", minute=900))
-    # Assert the RELATIVE invariant, not an absolute nat count: on a 6-event toy
-    # baseline the rare tool scores 2.77 nats (P ~ 6%), which is the right
-    # answer but arbitrary to compare against a magic constant. What must hold
-    # is that a rare credential tool appearing somewhere new is more surprising
-    # than a ubiquitous process doing the same.
-    s_common = det.score_event(_proc("C:/Windows/explorer.exe", host="ws99", minute=901))
-    assert s > s_common
-    assert s > 1.0
-    # A ubiquitous process on a new host is not projected at all.
-    assert det.edges_for(_proc("C:/Windows/explorer.exe", host="ws99")) == []

@@ -23,17 +23,17 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **46/60 = 76.7%** | **3.37** |
+| **engine** | **51/60 = 85.0%** | **3.33** |
 
 | technique | recall | | technique | recall |
 |---|---|---|---|---|
-| AS-REP roasting | 6/6 | | Pass-the-Hash | 7/9 |
-| password spray | 6/6 | | DCSync | 7/8 |
-| golden ticket | 4/4 | | Kerberoasting | 6/8 |
-| LSASS dump | 4/4 | | silver ticket | 5/8 |
+| AS-REP roasting | 6/6 | | DCSync | 8/8 |
+| password spray | 6/6 | | silver ticket | 8/8 |
+| golden ticket | 4/4 | | Pass-the-Hash | 8/9 |
+| LSASS dump | 4/4 | | Kerberoasting | 6/8 |
 | account manipulation | 1/5 | | NTDS dump | 0/2 |
 
-The per-technique split varies with attack placement across seeds; the 46/60 total
+The per-technique split varies with attack placement across seeds; the 51/60 total
 is stable and reproduces on an independent six-seed set. The contamination guard
 makes no measurable difference (`oracle` ≡ `none`).
 
@@ -107,7 +107,6 @@ The in-sample null is not a small optimism. Measured p99 benign surprise:
 |---|---|---|
 | `user_src` | 3.26 | **8.49** |
 | `proc_access` | 6.85 | **16.27** |
-| `rare_proc` | 1.08 | **15.57** |
 
 It asserts that 3.3 is the 99th percentile of benign `user_src` surprise when
 benign novelty routinely reaches 8.5. An estate with static addresses hides this,
@@ -136,7 +135,7 @@ Every component is held to measured contribution.
 
 | component | evidence | verdict |
 |---|---|---|
-| edge surprise | 46/60; carries the product | keep |
+| edge surprise | 51/60; carries the product | keep |
 | per-view null calibration | without it, high-baseline views (`proc_access` ~5.5 nats benign) set the bar for low-baseline views (`user_src` ~0.29) | keep |
 | `tgs_enc` view | Kerberoasting 6/8; 0 without it | keep |
 | MIDAS burst term | surfaces fan-out / spray / rapid reuse | keep |
@@ -154,7 +153,6 @@ whether a relationship type can carry signal at all:
   tgs_enc            2114           0.4%
   kerb_ctx            981           0.2%
   dir_op               21           4.8%     <- 72.0% when keyed on the group object
-  src_dst             351           8.8%
   user_src            351           9.1%     <- 91.8% if keyed on IP instead of device
 ```
 
@@ -171,53 +169,60 @@ rather than per-attack judgement.
 benchmark, so a view is kept on measured contribution rather than on the
 plausibility of its rationale. Six seeds, same protocol as above.
 
-| view dropped | recall | Δ | FP/day | standalone recall |
+Two views were removed on this evidence, taking the engine from 46/60 at 3.37
+FP/day to **51/60 at 3.33** — more recall and fewer false positives:
+
+| view dropped | recall | Δ | FP/day | standalone |
 |---|---|---|---|---|
-| — (all views) | 43/60 | — | 3.46 | — |
-| `user_src` | 33/60 | **−10** | 3.65 | 34/60 |
-| `kerb_ctx` | 37/60 | **−6** | 3.56 | 6/60 |
-| `tgs_enc` | 41/60 | −2 | 3.48 | 7/60 |
-| `proc_access` | 43/60 | 0 | 3.46 | 4/60 |
-| `rare_proc` | 43/60 | 0 | 3.46 | 0/60 |
-| `dir_op` | 45/60 | +2 | 3.42 | — |
-| `src_dst` | 48/60 | **+5** | 3.39 | 29/60 |
+| — (all seven) | 46/60 | — | 3.37 | — |
+| `user_src` | 39/60 | **−7** | 3.50 | 35/60 |
+| `kerb_ctx` | 41/60 | **−5** | 3.46 | 6/60 |
+| `tgs_enc` | 42/60 | **−4** | 3.44 | 7/60 |
+| `dir_op` | 46/60 | 0 | 3.37 | 13/60 |
+| `rare_proc` | 46/60 | 0 | 3.37 | **0/60** |
+| `proc_access` | 49/60 | +3 | 3.31 | 5/60 |
+| `src_dst` | 51/60 | **+5** | 3.33 | 29/60 |
 
-Combined: dropping `src_dst` alone reaches 48/60 at 3.39; dropping `dir_op` or
-`rare_proc` on top of that changes nothing; dropping `proc_access` as well costs
-2, so `proc_access` does contribute once `src_dst` is no longer masking it.
+**Why dropping a view can *raise* recall.** Each view that fires on an event adds
+a test to that cell's Šidák correction. Šidák assumes the tests are independent;
+two views derived from the same event are not, so a correlated pair is penalised
+twice — once for adding no independent evidence, and again for inflating the
+correction applied to the view that did. A view must therefore earn its
+correction cost, not merely be plausible.
 
-**`user_src` carries the product.** It is the only view that is both essential
-(−10 when dropped) and strong alone (34/60). Everything else is supporting
-evidence.
+**Removed: `src_dst`.** It projects (source host → destination host) from the same
+4624 events `user_src` reads, so the two are strongly correlated. It is capable
+alone (29/60) but redundant in combination, and dropping it gains 5 detections
+while lowering false positives. The finding reproduced across two estate
+revisions, including after the estate's per-department server access was replaced
+with realistic per-person working sets — the confound originally suspected of
+causing it.
 
-**Two mechanisms make a view net-negative, and they are different problems.**
+This is a deliberate divergence from the published baseline: Bowman et al. (RAID
+2020) use source-computer → destination-computer edges as the *primary* signal on
+LANL, at ~0.85 TPR / 0.9% FPR. That setting has no account-to-device view
+available — a flat authentication log makes host-to-host the richest relation
+obtainable. Here the account→device view exists and strictly dominates it. The
+view remains selectable via `AuthGraphConfig.enabled_views` for a deployment
+whose telemetry lacks a usable device identity.
 
-- *Evidence starvation.* `dir_op` sees ~22 benign directory operations in the
-  calibration slice, so its null floors at `1/(n+1) ≈ 0.043`. It can never assert
-  significance — but it still adds a test to the Šidák correction in every cell
-  where a directory event lands, diluting the views that can. This is the same
-  evidence limit that leaves account manipulation at 0/5, now visible as a cost
-  rather than merely an absence. A longer baseline resolves it; deleting the view
-  would instead make directory attacks structurally undetectable.
-- *Redundancy plus displacement.* `src_dst` is well-evidenced (~329 edges) and
-  individually capable (29/60), but it derives from the same 4624 events as
-  `user_src` and is strongly correlated with it. Under a fixed alert budget its
-  moderate p-values displace `user_src`'s stronger ones.
+**Removed: `rare_proc`.** It detected nothing, in every configuration, across
+both estate revisions: 0/60 standalone and no change when dropped. A view that
+has never contributed a detection cannot justify the correction it costs.
 
-**`src_dst` is nevertheless retained, and the reason matters.** The estate's
-`server_access` is a fixed per-department list, so host-to-host edges are close to
-deterministic by construction — precisely the dimension this view measures. That
-is a known property of the fixture, not of real networks, and it is exactly the
-kind of artifact that makes a simulator result untrustworthy. The published
-evidence points the other way: Bowman et al. (RAID 2020) report ~0.85 TPR at 0.9%
-FPR on **real** LANL data using source-computer → destination-computer edges as
-the primary lateral-movement signal. Removing the canonical real-data view on the
-strength of a fixture whose bias sits in that same dimension would be the
-circularity this project exists to avoid.
+**Retained despite a positive drop-delta: `proc_access`** (+3). Unlike `src_dst`
+it is not redundant — it is the only view reading Sysmon process access, so
+removing it would leave credential-store access structurally undetectable. Real
+telemetry exercises it far more heavily than the estate does (7,495 edges on the
+OTRF NTDS capture against 2,053 here), so the estate is the weaker evidence about
+its value. Its cost is false-positive displacement under a fixed budget rather
+than absence of signal.
 
-The finding is therefore recorded, not acted on. `AuthGraphConfig.enabled_views`
-lets a deployment disable any view, and this decision should be re-made on a
-corpus with realistic host-to-host variety — see [datasets.md](datasets.md).
+**Retained: `dir_op`** (0). Evidence-starved at ~21 baseline observations, so its
+null floors near `1/(n+1) ≈ 0.045` and it can rarely assert significance — yet it
+reaches 13/60 alone at only 0.71 FP/day, and it is the only view reading directory
+operations. A longer baseline resolves the floor; deleting the view would make
+directory attacks permanently invisible.
 
 ## Scalability
 

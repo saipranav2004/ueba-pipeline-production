@@ -121,7 +121,6 @@ def graph_to_state(graph) -> dict:
         "edges": edges,
         "seen": {view: [_edge_key(e) for e in edges] for view, edges in graph._seen.items()},
         "principals": {view: sorted(v) for view, v in graph._principals.items()},
-        "img_hosts": {img: sorted(hosts) for img, hosts in graph._img_hosts.items()},
         "dst_counts": graph._dst_counts,
         "src_counts": graph._src_counts,
         "src_totals": graph._src_totals,
@@ -153,8 +152,6 @@ def graph_from_state(state: dict):
         graph._seen[view] = {_edge_from_key(k) for k in keys}
     for view, principals in state["principals"].items():
         graph._principals[view] = set(principals)
-    for img, hosts in state["img_hosts"].items():
-        graph._img_hosts[img] = set(hosts)
     graph._dst_counts = {v: dict(m) for v, m in state["dst_counts"].items()}
     graph._src_counts = {v: dict(m) for v, m in state["src_counts"].items()}
     graph._src_totals = {v: dict(m) for v, m in state["src_totals"].items()}
