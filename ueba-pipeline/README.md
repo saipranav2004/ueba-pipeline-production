@@ -36,11 +36,11 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **43/60 = 71.7%** | **3.46** |
+| **engine** | **46/60 = 76.7%** | **3.37** |
 
 Per-technique: AS-REP roasting `6/6`, password spray `6/6`, golden ticket `4/4`,
-LSASS dump `4/4`, Pass-the-Hash `7/9`, DCSync `5/8`, Kerberoasting `6/8`, silver
-ticket `5/8`, account manipulation `0/5`, NTDS dump `0/2`.
+LSASS dump `4/4`, DCSync `7/8`, Pass-the-Hash `7/9`, Kerberoasting `6/8`, silver
+ticket `5/8`, account manipulation `1/5`, NTDS dump `0/2`.
 
 **These are simulator numbers.** Read [docs/evaluation.md](docs/evaluation.md)
 before quoting them: the estate is self-generated, and no detection-performance
@@ -140,8 +140,9 @@ comparison harness, and real-telemetry ingestion validation.
 - **No real-world detection-performance validation.** Every recall and
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
-- **Account manipulation and NTDS dump** are evidence limits on this estate, not
-  tuning failures — both live in views too sparse to assert significance from.
+- **Account manipulation (1/5) and NTDS dump (0/2)** are evidence limits on this
+  estate, not tuning failures — both live in views too sparse to assert
+  significance from.
 - **Scale above ~300 entities is unmeasured.** O(1) counter updates predict it
   holds; that is a prediction.
 - **No multi-tenancy, RBAC, or API.** The product is a CLI.

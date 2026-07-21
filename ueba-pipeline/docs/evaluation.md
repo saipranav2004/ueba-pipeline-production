@@ -23,17 +23,17 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **43/60 = 71.7%** | **3.46** |
+| **engine** | **46/60 = 76.7%** | **3.37** |
 
 | technique | recall | | technique | recall |
 |---|---|---|---|---|
 | AS-REP roasting | 6/6 | | Pass-the-Hash | 7/9 |
-| password spray | 6/6 | | DCSync | 5/8 |
+| password spray | 6/6 | | DCSync | 7/8 |
 | golden ticket | 4/4 | | Kerberoasting | 6/8 |
 | LSASS dump | 4/4 | | silver ticket | 5/8 |
-| account manipulation | 0/5 | | NTDS dump | 0/2 |
+| account manipulation | 1/5 | | NTDS dump | 0/2 |
 
-The per-technique split varies with attack placement across seeds; the 43/60 total
+The per-technique split varies with attack placement across seeds; the 46/60 total
 is stable and reproduces on an independent six-seed set. The contamination guard
 makes no measurable difference (`oracle` ≡ `none`).
 
@@ -97,6 +97,10 @@ on the same six seeds:
 | prequential (score each event, then absorb) | 41/60 (68%) | 3.48 | over-conservative — every account's cold-start first contact inflates the tail |
 | **held-out slice (shipped)** | **43/60 (72%)** | **3.46** | **correct** — baseline from the earlier training period, null measured on a later held-out slice scored against that frozen baseline |
 
+These three were measured against each other on one estate revision, so the
+absolute figures sit below the current headline; the ordering between them is the
+result, and it is what decides the design.
+
 The in-sample null is not a small optimism. Measured p99 benign surprise:
 
 | view | in-sample | correctly calibrated |
@@ -124,7 +128,7 @@ is decided entirely by what identifies "source":
 | **device identity (shipped)** | **4.4%** |
 
 Keyed on the address, 92% of ordinary logons look like first contacts and the view
-is pure noise. Detection is unchanged by the churn: 43/60 either way.
+is pure noise. Detection is unchanged by the churn.
 
 ## Component evidence
 
@@ -132,13 +136,13 @@ Every component is held to measured contribution.
 
 | component | evidence | verdict |
 |---|---|---|
-| edge surprise | 43/60; carries the product | keep |
+| edge surprise | 46/60; carries the product | keep |
 | per-view null calibration | without it, high-baseline views (`proc_access` ~5.5 nats benign) set the bar for low-baseline views (`user_src` ~0.29) | keep |
 | `tgs_enc` view | Kerberoasting 6/8; 0 without it | keep |
 | MIDAS burst term | surfaces fan-out / spray / rapid reuse | keep |
 | host→user session attribution | one entity space for alerting | keep |
 | `dir_op` view | keyed on operation class (9.1% benign novelty) not object touched (72%) | keep |
-| volumetric (ECOD) track | 15/60 alone; fused 29/60 at 3.88 FP/day vs 43/60 at 3.46 | **removed** |
+| volumetric (ECOD) track | 15/60 alone; fused 29/60 at 3.88 FP/day against 43/60 at 3.46 for the detector alone | **removed** |
 | peer track (Poisson MF) | added no technique the edge model missed; dense O(users × dests) state | **removed** |
 
 `train` reports each view's benign novelty rate, which is the measurable test of
@@ -146,12 +150,12 @@ whether a relationship type can carry signal at all:
 
 ```
   view              edges  benign novelty
-  proc_access        2059           0.0%     <- stable: a novel edge is real evidence
-  tgs_enc            2122           0.4%
-  kerb_ctx            989           0.2%
-  src_dst             329           6.7%
-  user_src            329           7.3%     <- 91.8% if keyed on IP instead of device
-  dir_op               22           9.1%     <- 72.0% when keyed on the group object
+  proc_access        2053           0.0%     <- stable: a novel edge is real evidence
+  tgs_enc            2114           0.4%
+  kerb_ctx            981           0.2%
+  dir_op               21           4.8%     <- 72.0% when keyed on the group object
+  src_dst             351           8.8%
+  user_src            351           9.1%     <- 91.8% if keyed on IP instead of device
 ```
 
 A view whose benign edges are routinely novel cannot separate a first contact from
