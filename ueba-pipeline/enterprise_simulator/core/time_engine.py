@@ -253,6 +253,13 @@ def random_ts_in_session(
 
 
 # ── Service account timestamps ────────────────────────────────────────────────
+# Monitoring agents check in on a fixed cadence. 15 minutes is the common default
+# for enterprise agents; the small jitter is scheduler slippage, not variation in
+# intent, so it stays far below the interval and keeps the period recoverable.
+_MONITORING_INTERVAL_MINUTES = 15
+_MONITORING_JITTER_MINUTES = 1
+
+
 def service_account_ts(
     rng:          random.Random,
     d:            date,
@@ -274,8 +281,16 @@ def service_account_ts(
     }
     h, m, spread = schedules.get(service_type, schedules["backup"])
     if service_type == "monitoring":
-        h = rng.randint(0, 23)
-        m = rng.randint(0, 59)
+        # Monitoring agents poll on a fixed interval, which is the defining
+        # statistical property of a non-human identity: strong periodicity, low
+        # entropy, a narrow baseline. Drawing a uniformly random hour instead
+        # would make these accounts look like low-activity humans and remove the
+        # very signal that separates the two populations (Heard, Rubin-Delanchy &
+        # Lawson, "Filtering automated polling traffic in computer network flow
+        # data", IEEE JISIC 2014).
+        slot = rng.randrange(0, 24 * 60, _MONITORING_INTERVAL_MINUTES)
+        h, m = divmod(slot, 60)
+        spread = _MONITORING_JITTER_MINUTES
     base_ist  = _float_hour_to_datetime(d, h + m / 60.0)
     jitter    = rng.randint(-spread * 60, spread * 60) if spread > 0 else 0
     local_ist = base_ist + timedelta(seconds=jitter)

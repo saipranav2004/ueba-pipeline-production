@@ -417,8 +417,8 @@ def simulate_employee_day(
     result.add("security", tgt_ts,
                gen_4768(emp.samaccountname, src_ip, tgt_ts, bus, logon_guid=tgt_guid))
 
-    # ── Kerberos TGS (4769) for first server ──────────────────────────────────
-    tgs_server = dept.server_access[0] if dept.server_access else "DC01"
+    # ── Kerberos TGS (4769) for a server this person actually uses ────────────
+    tgs_server = _pick_server(emp, dept, rng)
     spn, spn_sid = _CIFS_SPNS.get(
         tgs_server,
         (f"cifs/{tgs_server}.nexovate.local", "S-1-5-21-1484628597-1684816888-3125425894-1099")
@@ -696,7 +696,7 @@ def simulate_employee_day(
 
     # ── Additional TGS for other servers accessed during day ──────────────────
     if len(dept.server_access) > 1 and rng.random() < 0.5:
-        extra = rng.choice(dept.server_access[1:])
+        extra = _pick_server(emp, dept, rng)
         if extra in _CIFS_SPNS:
             espn, espn_sid = _CIFS_SPNS[extra]
             srv_ts = random_ts_in_session(rng, logon_utc, logoff_utc, "afternoon")
@@ -967,6 +967,44 @@ def simulate_service_account_day(
 # ════════════════════════════════════════════════════════════════════════════
 # LIFECYCLE EVENTS — onboarding, offboarding, transfers
 # ════════════════════════════════════════════════════════════════════════════
+
+# Share of server accesses that fall outside a person's usual working set: a new
+# project share, covering for a colleague, a one-off request. Real access follows
+# a stable per-person working set with a long tail rather than a department-wide
+# constant, and that tail is the benign novelty a detector must tolerate.
+_SERVER_EXPLORE_RATE = 0.06
+
+
+def _personal_servers(emp, dept) -> List[str]:
+    """The stable subset of departmental servers this person actually uses.
+
+    Derived deterministically from the account name, so it is the same every day
+    for the same person without needing to be stored. Giving every member of a
+    department an identical server list makes host-to-host edges deterministic by
+    construction, which is not how an estate behaves and which distorts any
+    measurement of relationship views (see docs/evaluation.md).
+    """
+    servers = list(dept.server_access)
+    if len(servers) <= 1:
+        return servers
+    personal = random.Random(f"servers:{emp.samaccountname}")
+    # Most people work against a small, stable handful even when their department
+    # is entitled to more.
+    size = min(len(servers), personal.randint(1, max(2, (len(servers) + 1) // 2)))
+    return personal.sample(servers, size)
+
+
+def _pick_server(emp, dept, rng: random.Random) -> str:
+    """Choose a destination server for one access."""
+    servers = list(dept.server_access)
+    if not servers:
+        return "DC01"
+    usual = _personal_servers(emp, dept)
+    outside = [s for s in servers if s not in usual]
+    if outside and rng.random() < _SERVER_EXPLORE_RATE:
+        return rng.choice(outside)
+    return rng.choice(usual) if usual else rng.choice(servers)
+
 
 _DHCP_LEASE_DAYS = 4          # how long a device keeps its address
 _WIFI_FRACTION = 0.25         # share of on-site days spent on corporate Wi-Fi
