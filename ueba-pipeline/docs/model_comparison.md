@@ -178,7 +178,7 @@ techniques.
 ## Caveats
 
 - Per-window PR-AUC here is a different, stricter lens than the graph track's
-  product-level per-attack recall (71.7%, see [BENCHMARK.md](../BENCHMARK.md)); the
+  product-level per-attack recall (71.7%, see [evaluation.md](evaluation.md)); the
   two are not interchangeable.
 - One-Class SVM and LOF training sets are capped for tractability; capped rows are
   flagged in the report and the cap is recorded in `ModelSpec.max_train_rows`.

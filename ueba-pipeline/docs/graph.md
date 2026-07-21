@@ -114,6 +114,6 @@ calibrated p-value, benchmarked as its own track and kept only if it earns its
 place — the standard every detection component is held to.
 
 Backend: NetworkX in-memory by default (a few thousand nodes, snapshot recompute
-under a second). Memgraph via Bolt for scale-out. Betweenness falls back to pivot
+under a second). Betweenness falls back to pivot
 sampling (Brandes & Pich, 2007) above `betweenness_exact_max_nodes`, since exact
 Brandes is O(V·E) and unusable past ~10k nodes.

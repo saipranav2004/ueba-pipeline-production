@@ -13,26 +13,20 @@ log files / Kafka
   features/manifest.py ......... which feature groups this estate can support
   features/aggregate.py ........ per (entity, hour) behavioural count vectors
       |
-      +---------------+---------------+
-      |                               |
-      v                               v
-  GRAPH TRACK                     VOLUMETRIC TRACK
-  edge surprise per view          ECOD over behavioural counts
-  (Dirichlet, nats)               (optional; off by default)
-      |                               |
-      v                               v
-  models/pvalue.py ... ONE frozen null PER VIEW -> calibrated p-value
-      |                               |
-      +---------------+---------------+
-                      v
-               models/fisher.py
+      v
+  graph/auth_graph_anomaly.py .. edge surprise per view (Dirichlet, nats)
+      |
+      v
+  models/pvalue.py ............. ONE frozen null PER VIEW -> calibrated p-value
+      |
+      v
+  models/fisher.py
         Tippett  across the views an event fires
-        Tippett  across the tracks that are enabled
         Šidák    over the windows an entity was tested in
         budget / BH  across entities
-                      |
-                      v
-               ranked entity alerts
+      |
+      v
+  ranked entity alerts
 ```
 
 ## Everything is a p-value
@@ -83,19 +77,18 @@ it is calibrated).
 | level | tests | combiner | reason |
 |---|---|---|---|
 | across the views one event fires | few, expect **one** to be anomalous | **Tippett** (min-p + Šidák) | each view is already calibrated against its own null; the event is as suspicious as its most anomalous relationship |
-| within one track in one (entity, hour) | many, homogeneous, expect **one** bad | **Tippett** (min-p + Šidák) | a single severe event among many benign ones in the same hour must not be diluted |
-| across the enabled tracks | few, heterogeneous, expect **one** to fire | **Tippett** | an intrusion typically trips one detector strongly; the most-anomalous track is the right test |
+| within one (entity, hour) | many, homogeneous, expect **one** bad | **Tippett** (min-p + Šidák) | a single severe event among many benign ones in the same hour must not be diluted |
 | across an entity's windows | many | **Šidák** | a minimum over n windows *is* a test over n windows; uncorrected, any entity observed long enough looks significant |
 | across entities | many | **budget** or Benjamini-Hochberg | the analyst operates a fixed triage queue |
 
 Combiner selection follows Heard & Rubin-Delanchy (Biometrika 105(1), 2018), which
 shows via Birnbaum (1954) that every reasonable combiner is optimal against *some*
 alternative — so the choice is made per level, against the alternative that level
-faces. Both the within-track and the cross-track level face a one-anomaly-among-k
+faces. Both the per-view and the within-hour level face a one-anomaly-among-k
 alternative, so both use Tippett. Fisher (few-small-among-many) is the wrong test
 here: it rewards several moderate p-values, which under a fixed alert budget lets a
 busy-but-benign entity's ordinary variation combine into false significance and
-displace a real single-track detection.
+displace a real detection.
 
 **Do not replace this with noisy-OR and decay.** Solving that recursion at a 24h
 halflife, any entity with a recurring per-hour risk ≥ 0.15 crosses an 0.85
@@ -104,9 +97,7 @@ busiest, and it saturates so nothing ranks. The Šidák/Tippett path inverts thi
 an entity's significance is its single most anomalous window, corrected for how
 many windows it was tested in, so more observation cannot manufacture significance.
 
-## The two tracks
-
-### Graph — has this principal reached, or done, something it shouldn't?
+## The detector — has this principal reached, or done, something it shouldn't?
 
 ```
 surprise = max( −log P(dst | src), −log P(src | dst) )
@@ -129,23 +120,13 @@ to "was this destination reached by someone new?", the entire signal for
 `rundll32.exe` opening lsass scores 0.0 forward. The reverse conditional catches
 it. The full set of views is documented in [graph.md](graph.md).
 
-### Volumetric — has this entity's activity profile shifted?
-
-Per-entity z-normalised counts → ECOD (Li et al., TKDE 2022) → p-value. The signal
-is a deviation from the *entity's own* baseline, which a globally-fitted model
-cannot see; entities without enough history fall back to global statistics.
-
-ECOD is implemented in `models/inductive_ecod.py` with a frozen per-column ECDF, so
-scoring is a binary search per feature: inductive, order- and batch-independent,
-and the artifact is bounded at O(features × grid) regardless of training-set size.
-
 ## Entity space
 
-Every track scores **accounts**. Host-scoped telemetry (Sysmon
+All scoring is over **accounts**. Host-scoped telemetry (Sysmon
 ProcessAccess/ProcessCreate) names a host and an image but no user;
 `graph/sessions.py` resolves it to the account logged on at that time, causally,
-from 4624 events. This keeps every track in one entity space, which the entity-level
-ranking requires. Unresolved events keep the host — a process opening lsass on a
+from 4624 events. This keeps all telemetry in one entity space, which the
+entity-level ranking requires. Unresolved events keep the host — a process opening lsass on a
 host nobody is logged into is not less interesting, it is just not yet an identity.
 
 ## State contract
@@ -166,12 +147,14 @@ content. An empty signing key is refused rather than degraded. See
 
 `graph/identity_graph.py` computes structural risk — Tier-0 proximity, attack
 paths, blast radius — for visualisation and prioritisation. It is **not** fused
-into detection scoring. If it ever should be, the way in is as a fourth calibrated
-p-value, benchmarked as its own track, kept only if it earns its place. This is the
+into detection scoring. If it ever should be, the way in is as an additional
+calibrated p-value, benchmarked separately and kept only if it earns its place. This is the
 natural home for the directory context (a Tier-0 watchlist) that a privileged-group
 change needs to be reliably distinguished from routine group management.
 
-NetworkX by default; Memgraph for scale-out.
+Computed with NetworkX on a rolling snapshot rather than per event, so it only
+has to finish inside the retrain window: at this scale (a few hundred to a few
+thousand nodes) the full five-metric pass completes in well under a second.
 
 ## Extension paths (not implemented)
 

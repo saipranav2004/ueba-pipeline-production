@@ -245,7 +245,7 @@ class AuthGraphAnomalyDetector:
             # object -- (actor -> group:X) -- makes the destination space large and
             # sparsely visited: an admin's routine access-request work lands on a
             # different group almost every time, so ~72% of benign edges are novel
-            # and novelty stops meaning anything (measured; see BENCHMARK.md's
+            # and novelty stops meaning anything (measured; see docs/evaluation.md's
             # per-view novelty table). The operation class is low-cardinality and
             # stable per principal: the handful of admins who manage the directory
             # do the same operations daily, so those edges are seen and score ~0.

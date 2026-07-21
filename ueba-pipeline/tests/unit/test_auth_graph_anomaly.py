@@ -13,12 +13,12 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# Novelty is no longer a constant (BENCHMARK.md): it is -log P(dst|src) under a
+# Novelty is graded, not a constant: it is -log P(dst|src) under a
 # Dirichlet-smoothed null, so tests assert "clearly surprising" in nats rather
 # than equality with a magic 6.0. 3.0 nats == P(dst|src) < 5%.
 _SURPRISING = 3.0
 
-# NOTE ON COLD START (semantic change, BENCHMARK.md):
+# NOTE ON COLD START:
 # Surprise is -log P(dst|src) under a Dirichlet-smoothed null. With an EMPTY
 # baseline, pi_d = 1 and P(dst|src) = 1, so surprise = 0: with no evidence,
 # nothing is surprising. This is what keeps new and low-activity accounts out of
