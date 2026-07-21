@@ -28,14 +28,81 @@ of code closes it — it requires a labelled corpus behind a data-use agreement.
 | dataset | telemetry | labels | benign background | access | verdict |
 |---|---|---|---|---|---|
 | **OTRF Security-Datasets** (Mordor) | real Windows Security + Sysmon | ATT&CK technique | minimal (logs cleared per run) | GitHub, MIT, plain HTTP | **adopted** for ingestion correctness |
-| LANL 2015 (Comprehensive) | auth + process (flat) | red-team | real enterprise | DUA, no automation | target for detection perf; blocked on manual DUA |
-| LANL 2017 (Unified Host) | real Windows EventIDs | none | real enterprise | DUA | benign-novelty / scale test; blocked on DUA |
-| DARPA OpTC | eCAR (not Sysmon) | red-team | automated agents | open, ~1 TB | endpoint side; needs eCAR→Sysmon conversion |
-| LMDG / LMTrace (2025) | Windows AD, full topology | process-tree ground truth | simulated, multi-day | GitHub, 944 GB | closest full-AD fit; large, new |
+| **COMISET** (2025) | real Windows event logs via Winlogbeat | ATT&CK-labelled malicious | **real** (university network) + lab | Zenodo, **CC-BY-4.0**, direct download | **top recommendation** for detection performance |
+| LANL 2015 (Comprehensive) | auth + process (flat) | red-team | real enterprise | DUA, no automation | blocked on manual DUA |
+| LANL 2017 (Unified Host) | real Windows EventIDs | none | real enterprise | DUA | blocked on DUA |
+| DARPA OpTC | eCAR (not Sysmon) | red-team | automated agents | open, ~1 TB | **no domain-controller logs** — see note below |
+| LMDG / LMTrace (2025) | Windows AD, full topology | process-tree ground truth | simulated, multi-day | **repository is empty** | announced but not published |
 | EVTX-ATTACK-SAMPLES | real EVTX (incl. 4662 DCSync, Sysmon 10) | by filename | none | GitHub | fixture library; needs EVTX binary parsing |
 | Splunk BOTS v1–v3 | Sysmon + Suricata + more | scenario/CTF | incident-shaped | GitHub, CC0 | Splunk-indexed, not per-view structured |
 | CERT Insider Threat | synthetic | insider labels | synthetic | open | not AD attack telemetry |
 | AIT-LDS | Linux/web-centric | ground truth | synthetic | Zenodo | minimal Windows AD coverage |
+
+Sources: [OTRF Security-Datasets](https://github.com/OTRF/Security-Datasets) ·
+[COMISET (Zenodo 10.5281/zenodo.15375146)](https://zenodo.org/records/15375146) ·
+[LANL 2015](https://csr.lanl.gov/data/cyber1/) ·
+[LANL 2017](https://csr.lanl.gov/data/2017/) ·
+[DARPA OpTC](https://github.com/FiveDirections/OpTC-data) ·
+[LMDG paper (arXiv:2508.02942)](https://arxiv.org/abs/2508.02942) ·
+[LMTrace repo](https://github.com/WASPLab/LMTrace) ·
+[EVTX-ATTACK-SAMPLES](https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES)
+
+### The AD-dataset gap is structural, not an oversight
+
+Public datasets containing genuine **Active Directory attack** telemetry with
+domain-controller logs are close to nonexistent. HADES (arXiv:2407.18858) states
+the position directly: public datasets largely omit AD attacks because of the
+emulation infrastructure required, and OpTC — the one public dataset that does
+include AD-based attacks — carries system logs from domain-joined hosts only,
+**with no logs from the domain controller**. Since 4662 (directory access), 4768
+/4769 (Kerberos) and the account-lifecycle events are DC-side, OpTC cannot
+exercise the views that carry DCSync, Kerberoasting or account manipulation.
+
+This is the substantive justification for shipping a simulator at all, and it is
+also why the simulator's numbers must never be presented as real-world
+performance.
+
+### Two claims corrected by direct verification
+
+- **LMDG / LMTrace is not obtainable.** The paper describes a 25-day, 25-VM,
+  22-account estate with 944 GB of logs and 35 multi-stage attacks, and names
+  `github.com/WASPLab/LMTrace` as the distribution point. That repository is
+  **empty** — zero commits, 0 KB, no release. It cannot currently be used, and
+  any plan that depends on it is blocked.
+- **OpTC's repository is documentation, not data.** The GitHub repository is
+  ~428 KB (the eCAR specification and errata); the ~1 TB corpus is hosted
+  elsewhere, and its format is eCAR rather than Sysmon, so it needs conversion
+  that is lossy for process-access records.
+
+### COMISET: the strongest available path to real detection numbers
+
+[COMISET](https://zenodo.org/records/15375146) is the most promising real dataset
+found, and unlike LANL it needs no agreement:
+
+- **License** CC-BY-4.0; **access** direct HTTP from Zenodo, no registration.
+- **Two environments**: `Comiset23_Lab_Environment_Dataset.zip` (4.91 GB, a
+  small-company infrastructure emulation) and
+  `Comiset23_Real_Environment_Dataset.zip` (31.7 GB, a **real** university
+  network — genuine human benign background, which no other candidate offers).
+- **~250 million events**, malicious events labelled against MITRE ATT&CK,
+  covering multi-stage vectors including lateral movement and privilege
+  escalation.
+- **Format**, verified by decompressing the archive head over an HTTP range
+  request rather than downloading it: newline-delimited JSON in Elasticsearch
+  export shape — each record has `_source` carrying Winlogbeat/ECS fields, with
+  the event id at `_source.z_elastic_ecs.event.code` and the provider at
+  `_source.z_elastic_ecs.event.provider`, plus flattened per-event fields.
+
+That shape is close to the flat NXLog form `parsing.normalize` already ingests, so
+the adapter is a thin `_source` unwrap plus an event-id/channel mapping —
+comparable in size to `evaluation/otrf_adapter.py`. **This is the recommended
+next dataset integration**: it is the only identified corpus that supplies
+labels *and* a real benign background *and* permissive redistribution, which is
+exactly the combination detection-performance measurement requires.
+
+Cost to be aware of before starting: the lab archive expands from 4.91 GB
+compressed to a single JSON file, so ingestion should stream rather than
+materialise it.
 
 **Why OTRF was adopted first.** It is the only source that is simultaneously real
 Windows/Sysmon telemetry, ATT&CK-labelled, and downloadable over plain HTTP with
