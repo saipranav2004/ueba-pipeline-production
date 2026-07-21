@@ -81,7 +81,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
-from ueba_pipeline.features import build_capability_manifest, build_user_windows
+from ueba_pipeline.features import build_capability_manifest, observed_entity_windows
 from ueba_pipeline.graph.auth_graph_anomaly import (
     AuthGraphAnomalyDetector, AuthGraphConfig, DIR_OP_CLASS,
 )
@@ -281,7 +281,10 @@ class BehavioralEngine:
 
     # -- batch scoring (PURE: does not mutate detector state) --------------
     def score(self, events: List) -> Tuple[List[WindowDetection], List[EntityRisk]]:
-        windows = build_user_windows(events, self.manifest, self.config.window_hours)
+        # Only the (entity, hour) keys are needed, to count the tests each entity
+        # received for the Šidák correction. Computing behavioural feature vectors
+        # here would run every extractor and discard every value.
+        observed = observed_entity_windows(events, self.config.window_hours)
         # Built fresh from this batch: pure, no cross-call state (state contract
         # above). Deliberately not carried from fit -- a stale session map would
         # silently misattribute months later.
@@ -290,9 +293,9 @@ class BehavioralEngine:
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
-        hours = [d.hour for d in detections] or [w.window_start for w in windows]
+        hours = [d.hour for d in detections] or [h for _, h in observed]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
-        return detections, self._rollup(detections, windows, observed_days=max(days, 1.0))
+        return detections, self._rollup(detections, observed, observed_days=max(days, 1.0))
 
     def observe(self, events: List) -> "BehavioralEngine":
         """Explicitly fold events into the baseline (online adaptation).
@@ -385,7 +388,7 @@ class BehavioralEngine:
         d.graph_p = min(d.graph_p, p)
 
     # -- rollup / alerting -------------------------------------------------
-    def _rollup(self, detections: List[WindowDetection], windows: Optional[List] = None,
+    def _rollup(self, detections: List[WindowDetection], observed=None,
                 observed_days: Optional[float] = None) -> List[EntityRisk]:
         """Entity risk = Sidak-corrected minimum hourly p over the entity's hours.
 
@@ -394,6 +397,9 @@ class BehavioralEngine:
         entity observed long enough eventually looks significant. Alerts are then
         selected by a fixed analyst budget, or by Benjamini-Hochberg across
         entities.
+
+        ``observed`` is the set of ``(entity, window_start)`` pairs the batch saw,
+        which is how many tests each entity received.
         """
         by_entity: Dict[str, List[WindowDetection]] = {}
         for d in detections:
@@ -401,10 +407,10 @@ class BehavioralEngine:
 
         # Number of hours each entity was actually observed = tests it received.
         tested: Dict[str, int] = {}
-        if windows:
+        if observed:
             seen: Dict[str, set] = {}
-            for w in windows:
-                seen.setdefault(_norm(w.user), set()).add(_floor_hour(w.window_start))
+            for user, window_start in observed:
+                seen.setdefault(_norm(user), set()).add(_floor_hour(window_start))
             tested = {k: len(v) for k, v in seen.items()}
 
         out: List[EntityRisk] = []

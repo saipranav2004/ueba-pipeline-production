@@ -195,10 +195,10 @@ def evaluate(data_dir: str, train_fraction: float = 0.60,
 
     eng = _fit_engine(train, labels, cfg, contamination)
     detections, _ = eng.score(test)
-    from ueba_pipeline.features import build_user_windows
-    tw = build_user_windows(test, eng.manifest, cfg.window.feature_window_hours)
-    n_test_windows = len({(_norm(w.user), w.window_start.replace(minute=0, second=0, microsecond=0))
-                          for w in tw}) or 1
+    from ueba_pipeline.features import observed_entity_windows
+    tw = observed_entity_windows(test, cfg.window.feature_window_hours)
+    n_test_windows = len({(_norm(user), start.replace(minute=0, second=0, microsecond=0))
+                          for user, start in tw}) or 1
 
     return [_evaluate_detections(eng, detections, test_attacks, test_days,
                                  n_test_windows, contamination, windows=tw)]

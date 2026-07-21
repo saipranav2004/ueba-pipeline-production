@@ -94,3 +94,48 @@ def test_validate_rejects_an_unclassifiable_feature(full_manifest, monkeypatch):
     )
     with pytest.raises(ValueError, match="not attributable to an extractor group"):
         C.validate(full_manifest)
+
+
+def test_observed_windows_match_full_feature_vector_keys():
+    """The cheap window enumeration must key exactly like the full extractor.
+
+    `score()` needs only the (entity, hour) pairs, to count the tests each entity
+    received for the Šidák correction. It therefore uses `observed_entity_windows`
+    rather than building feature vectors it would discard. The two must agree on
+    every key: if attribution drifted between them, every correction would shift
+    silently.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ueba_pipeline.features.aggregate import build_user_windows, observed_entity_windows
+    from ueba_pipeline.parsing.normalize import NormalizedEvent
+
+    base = datetime(2025, 5, 1, 8, 0, tzinfo=timezone.utc)
+
+    def event(event_type, minute, group, **fields):
+        return NormalizedEvent(
+            event_time=base + timedelta(minutes=minute), ingest_time=None,
+            channel="Security", event_id=event_type, event_type=event_type,
+            group=group, computer_name="WS-01", outcome=None, keywords=[],
+            fields=fields,
+        )
+
+    events = []
+    for hour in range(4):
+        for user in ("alice", "bob"):
+            events.append(event("4624", hour * 60, "auth",
+                                target_user_name=user, target_user_name_norm=user,
+                                logon_type=3, auth_package="Kerberos", src_ip="10.0.0.5"))
+        # A directory operation, which attributes to the SUBJECT rather than the
+        # target -- the case most likely to diverge between the two paths.
+        events.append(event("4728", hour * 60 + 5, "account_lifecycle",
+                            subject_user_name_norm="admin",
+                            target_user_name_norm="domain admins"))
+
+    manifest = CapabilityManifest(available_groups=set(_GROUP_EXTRACTORS))
+    full = {(w.user, w.window_start) for w in build_user_windows(events, manifest, 1.0)}
+    cheap = observed_entity_windows(events, 1.0)
+    assert cheap == full, (
+        f"window keys diverged; only in full: {sorted(full - cheap)}; "
+        f"only in cheap: {sorted(cheap - full)}"
+    )

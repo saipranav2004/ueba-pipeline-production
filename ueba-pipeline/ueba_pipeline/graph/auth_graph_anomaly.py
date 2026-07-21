@@ -129,6 +129,12 @@ class AuthGraphConfig:
     # an attacker cannot launder repeated abuse into normality. In nats, and
     # reachable by construction: surprise is unbounded above.
     absorb_surprise: float = 12.0
+    # Relationship views the detector projects onto. ``None`` means every view
+    # ``edges_for`` can emit. Restricting the set is how a view's contribution is
+    # measured: scripts/ablate_graph_views.py drops each in turn and re-runs the
+    # benchmark, so a view is kept on measured recall rather than on the
+    # plausibility of its rationale.
+    enabled_views: Optional[frozenset] = None
 
 
 @dataclass
@@ -264,6 +270,9 @@ class AuthGraphAnomalyDetector:
             host = _norm(event.computer_name)
             if image and host and len(self._img_hosts.get(image, ())) <= RARE_PROC_MAX_HOSTS:
                 out.append(("rare_proc", (host, image)))
+        enabled = self.config.enabled_views
+        if enabled is not None:
+            out = [(view, edge) for view, edge in out if view in enabled]
         return out
 
     # -- scoring ------------------------------------------------------------

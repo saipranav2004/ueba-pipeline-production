@@ -461,6 +461,34 @@ def feature_order_for_manifest(manifest: CapabilityManifest) -> List[str]:
     return names
 
 
+def observed_entity_windows(
+    events: List[NormalizedEvent],
+    window_hours: float,
+) -> Set[Tuple[str, datetime]]:
+    """The ``(entity, window_start)`` pairs an entity was observed in.
+
+    This is the number of tests an entity received, which the Šidák correction in
+    the rollup needs: taking a minimum over n windows is itself a test over n
+    windows. Only the keys matter there, never a feature value, so this uses the
+    same entity resolution and bucket arithmetic as :func:`build_user_windows`
+    but runs none of the extractors. Keeping the keying in one place is what makes
+    the two interchangeable for that purpose; changing attribution here without
+    changing it there would silently alter every correction.
+    """
+    window_seconds = window_hours * 3600.0
+    observed: Set[Tuple[str, datetime]] = set()
+    for ne in events:
+        if ne.event_time is None:
+            continue
+        user = _user_key(ne)
+        if not user:
+            continue
+        bucket = int(ne.event_time.timestamp() // window_seconds)
+        observed.add((user, datetime.fromtimestamp(bucket * window_seconds,
+                                                    tz=ne.event_time.tzinfo)))
+    return observed
+
+
 def build_user_windows(
     events: List[NormalizedEvent],
     manifest: CapabilityManifest,
