@@ -13,6 +13,7 @@ networkx>=3.0,<4         # identity graph (analyst tooling); NOT on the detectio
 #    classical baselines against the shipped detector. Not on the detection path,
 #    but required for `model-benchmark` to run.
 scikit-learn>=1.3,<2
+xgboost>=2.0,<4          # one entry in the model comparison; imported lazily
 
 # -- optional, feature-gated. Guarded at the import site; the core engine runs
 #    without it and falls back to file ingestion.
