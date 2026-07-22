@@ -88,6 +88,13 @@ DEFAULT_ALERT_BUDGET_PER_DAY = 5.0
 
 RANDOM_SEED = 20250106
 
+# Negative/positive ratio at the estate's ~0.7% prevalence, used as XGBoost's
+# scale_pos_weight. Held as a constant rather than fitted per fold so every fold
+# sees the same learner; the folds' prevalences differ by well under an order of
+# magnitude, so a per-fold value would change the model without changing the
+# comparison it is part of.
+_IMBALANCE_RATIO = 140.0
+
 
 # ── dataset ────────────────────────────────────────────────────────────────
 @dataclass
@@ -380,8 +387,27 @@ def _supervised_zoo() -> List[ModelSpec]:
         ])
 
     def boosting() -> object:
+        # class_weight="balanced" rather than unweighted: the other supervised
+        # models are class-weighted, and comparing a weighted model against an
+        # unweighted one measures the weighting, not the learner. At ~0.7%
+        # prevalence an unweighted boosting model predicts the majority class
+        # almost everywhere.
         return Pipeline([
-            ("clf", HistGradientBoostingClassifier(random_state=RANDOM_SEED)),
+            ("clf", HistGradientBoostingClassifier(
+                class_weight="balanced", random_state=RANDOM_SEED)),
+        ])
+
+    def xgboost_model() -> object:
+        from xgboost import XGBClassifier
+        return Pipeline([
+            ("clf", XGBClassifier(
+                n_estimators=300, max_depth=6, learning_rate=0.1,
+                # The documented remedy for imbalance in XGBoost: weight the
+                # positive class by the negative/positive ratio, which is what
+                # class_weight="balanced" does for the other learners.
+                scale_pos_weight=_IMBALANCE_RATIO,
+                eval_metric="aucpr", n_jobs=-1, random_state=RANDOM_SEED,
+                tree_method="hist")),
         ])
 
     return [
@@ -391,6 +417,8 @@ def _supervised_zoo() -> List[ModelSpec]:
         ModelSpec("extra_trees", forest(ExtraTreesClassifier), True),
         ModelSpec("hist_gradient_boosting", boosting, True,
                   note="Handles NaN natively, so no imputation step."),
+        ModelSpec("xgboost", xgboost_model, True,
+                  note="scale_pos_weight set to the negative/positive ratio."),
     ]
 
 

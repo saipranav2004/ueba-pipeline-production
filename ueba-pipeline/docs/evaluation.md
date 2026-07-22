@@ -276,11 +276,45 @@ surprise reaches 15.27 nats at p = 0.00123 — but relational novelty is the wro
 instrument for a threat that creates no new relationship, and the burst term that
 would have caught it costs more elsewhere than it returns.
 
-The direction this points to is a **separately calibrated volume view**: per-edge
-rate, carried as its own view with its own null and combined by Tippett like every
-other, rather than added into the surprise where it shares a null with novelty and
-cannot be calibrated independently. That is a design change, not a tuning one, and
-it is not attempted here on the strength of one synthetic corpus.
+### A per-entity volume view was built and rejected
+
+The obvious remedy was tried: a per-entity volume model scoring each identity's
+hourly event count against **its own** robust baseline (median and MAD), carried
+as a separately calibrated signal and combined by Tippett like every other.
+Per-entity rather than global is essential and was verified first — benign and
+insider volumes overlap heavily in absolute terms, because service accounts
+legitimately run hot, but separate cleanly per identity.
+
+It works, and it is still not shippable:
+
+| configuration | all-technique benchmark | insider corpus |
+|---|---|---|
+| **no volume signal (shipped)** | **53/60 at 3.31 FP/day** | 1/9 |
+| volume, global fallback for unknown identities | 8/60 at 4.86 | 9/9 |
+| volume, scored only where a baseline exists | 12/60 at 4.78 | 8/9 |
+
+It solves the insider case outright and costs 41 detections elsewhere. Removing
+the global fallback — which flags every service account against a population
+median of one or two events an hour — recovers only four of them.
+
+**The cause is architectural, not a calibration detail.** Tippett takes the
+minimum across signals, and the alert budget is shared. A signal with broad
+coverage and modest specificity therefore dominates the minimum for a large
+number of identities and displaces a signal with narrow coverage and high
+specificity, however well each is individually calibrated. Roughly half of all
+benign identity-hours legitimately exceed that identity's own median, so volume is
+inherently the broad, modest signal.
+
+This is the second independent test of the same conclusion: an ECOD volumetric
+track over per-entity normalised feature counts failed the same way and for the
+same reason. Two different implementations, one outcome.
+
+**The direction that remains open is separate queues, not better fusion.**
+Relational and volume evidence answer different questions and have different
+specificity, and forcing them through one minimum and one budget is what fails. A
+volume queue with its own budget would let both operate, at the cost of changing
+the product's alerting contract — a decision that should not be made on one
+synthetic corpus.
 
 ## Parameter sensitivity
 
