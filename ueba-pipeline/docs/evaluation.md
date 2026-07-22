@@ -156,6 +156,36 @@ whether a relationship type can carry signal at all:
   user_src            351           9.1%     <- 91.8% if keyed on IP instead of device
 ```
 
+### Low benign novelty is necessary but not sufficient
+
+The novelty rate says whether a view *can* carry signal. It does not say whether
+the view earns a place in the alert queue, and the difference is not small.
+
+A process-lineage view — `(host|parent image → child image)` from Sysmon process
+creation — was added and measured. Its profile is close to ideal by the novelty
+criterion: 7,973 baseline edges at **0.4% benign novelty**, high-volume and
+highly stable, so a novel spawn relationship is genuine evidence. It is also well
+supported externally: Hemmati, Sadeghiyan & Saeidi (2026) report that GUID-based
+process correlation consistently outperformed temporal correlation across every
+classifier they tested for ATT&CK technique classification, and process lineage is
+the standard discriminator for office-document-spawns-shell behaviour.
+
+It cost 17 detections: **53/60 at 3.31 FP/day became 36/60 at 4.23**, with
+password spray falling 6/6 → 2/6 and silver ticket 8/8 → 2/8.
+
+**This is the third independent confirmation of one mechanism.** `src_dst`, a
+per-entity volume signal, and now process lineage all measured well in isolation
+and all degraded the product. Under a minimum-combination rule with a shared alert
+budget, an added signal is harmful unless it is *strictly more specific* than what
+it displaces: it costs a Šidák test in every cell it touches, and its moderate
+p-values compete for queue slots against another view's strong ones. A
+high-volume view is penalised twice over, however clean its novelty rate.
+
+The external evidence is not wrong; it is answering a different question.
+Supervised technique classification benefits from more behavioural context because
+a classifier can weigh it. Unsupervised ranking under a fixed budget cannot — it
+can only take the minimum, and more context means more chances to be displaced.
+
 A view whose benign edges are routinely novel cannot separate a first contact from
 an attack, however it is calibrated. This single number drove three design
 decisions: key the source edge on the device, key Kerberoasting on the cipher
