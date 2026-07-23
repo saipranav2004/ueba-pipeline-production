@@ -60,8 +60,9 @@ _REAL_STORE_8001 = {
         "event_id": "8001", "log_name": "Microsoft-Windows-Store/Operational",
     },
 }
-# Constructed to the SAME verified flat-HELK schema, for a channel the streamed
-# prefix does not reach: a Security 4624 remote logon.
+# Constructed to the verified real COMISET field names (HELK renames LogonType to
+# lower-case ``logon_type`` and drops IpAddress; WorkstationName survives), for a
+# Security 4624 remote logon the streamed prefix does not reach.
 _SECURITY_4624 = {
     "_index": "logs-endpoint-winevent-security-2022.11.16", "_type": "_doc",
     "_id": "deadbeef", "_score": 1,
@@ -69,9 +70,25 @@ _SECURITY_4624 = {
         "type": "wineventlog", "@timestamp": "2022-11-16T09:00:00.000Z",
         "host_name": "dc01.phoenix.local", "event_id": "4624", "log_name": "Security",
         "TargetUserName": "jsmith", "TargetDomainName": "PHOENIX",
-        "LogonType": "3", "IpAddress": "10.0.0.55", "WorkstationName": "WS-JSMITH",
+        "logon_type": "3", "WorkstationName": "WS-JSMITH",
         "AuthenticationPackageName": "Kerberos",
         "z_elastic_ecs": {"event": {"code": "4624", "provider": "Microsoft-Windows-Security-Auditing"}},
+    },
+}
+# Real COMISET Sysmon-10 field names: SourceImage/TargetImage are renamed by HELK
+# to process_path/target_process_path; GrantedAccess/SourceUser/TargetUser survive.
+_SYSMON_10 = {
+    "_index": "logs-endpoint-winevent-sysmon-2022.11.16", "_type": "_doc",
+    "_id": "s10", "_score": 1,
+    "_source": {
+        "type": "wineventlog", "@timestamp": "2022-11-16T09:10:00.000Z",
+        "host_name": "ws-victim.phoenix.local", "event_id": "10",
+        "log_name": "Microsoft-Windows-Sysmon/Operational",
+        "process_path": "C:/Windows/System32/rundll32.exe",
+        "target_process_path": "C:/Windows/System32/lsass.exe",
+        "GrantedAccess": "0x1fffff", "SourceUser": "PHOENIX\\attacker",
+        "TargetUser": "NT AUTHORITY\\SYSTEM", "rule_technique_id": "T1003.001",
+        "z_elastic_ecs": {"event": {"code": "10", "provider": "Microsoft-Windows-Sysmon"}},
     },
 }
 
@@ -119,19 +136,42 @@ def test_real_records_normalise_through_the_production_parser(tmp_path):
 
 
 def test_security_logon_reaches_the_user_src_view(tmp_path):
-    """The adapter must carry a Security 4624 all the way to a graph edge."""
+    """The adapter must carry a Security 4624 all the way to a graph edge.
+
+    This only works once HELK's lower-case ``logon_type`` is aliased back to
+    ``LogonType`` (the remote-logon filter reads it); it is the field-rename that
+    silently produced zero edges before the alias table existed.
+    """
     path = _write_ndjson(tmp_path, [_SECURITY_4624])
     (event,) = list(read_comiset_events(path))
     assert event.event_type == "4624"
     assert event.group == "auth"
     assert event.fields.get("target_user_name") == "jsmith"
+    assert event.fields.get("logon_type") == 3          # alias restored + cast to int
 
     edges = AuthGraphAnomalyDetector().edges_for(event)
     views = {view for view, _ in edges}
     assert "user_src" in views, edges
-    # keyed on the device identity (WorkstationName), not the churny IP
+    # keyed on the device identity (WorkstationName), the only source COMISET carries
     (_, (src, dst)), = [(v, e) for v, e in edges if v == "user_src"]
     assert src == "jsmith" and dst == "ws-jsmith"
+
+
+def test_sysmon10_reaches_the_proc_access_view(tmp_path):
+    """proc_access is the one view COMISET's lab exercises richly, and it only
+    fires once HELK's process_path/target_process_path are aliased to
+    SourceImage/TargetImage."""
+    path = _write_ndjson(tmp_path, [_SYSMON_10])
+    (event,) = list(read_comiset_events(path))
+    assert event.event_type == "sysmon_10"
+    assert event.fields.get("source_image", "").endswith("rundll32.exe")
+    assert event.fields.get("target_image", "").endswith("lsass.exe")
+
+    edges = AuthGraphAnomalyDetector().edges_for(event)
+    proc = [(v, e) for v, e in edges if v == "proc_access"]
+    assert proc, edges
+    (_, (src, dst)), = proc
+    assert src.endswith("|rundll32.exe") and dst == "lsass.exe"
 
 
 @pytest.mark.skipif(

@@ -80,6 +80,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | `score-stream` | score online, adapting the baseline as events arrive |
 | `drift-check` | compare a live window's log-source capabilities against the bundle |
 | `walk-forward-eval` | causal out-of-time evaluation: per-technique recall, FP/day |
+| `comiset-eval` | real-data eval on a COMISET archive: per-view benign novelty + per-auth ROC |
 | `model-benchmark` | compare classical models under four leakage-resistant protocols |
 | `lanl-eval` | per-authentication ROC (TPR@FPR, AUC) on LANL 2015 |
 | `graph-viz` | render the structural identity graph to standalone HTML |

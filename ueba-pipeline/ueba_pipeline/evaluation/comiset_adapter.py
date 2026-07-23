@@ -31,16 +31,24 @@ marker ``PK\\x07\\x08``) holding one newline-delimited JSON file. Each line is a
                      ``"Microsoft-Windows-Sysmon/Operational"``)
   * ``host_name``  — the computer
   * ``@timestamp`` — the event time (ISO-8601, ``Z``)
-  * the Windows ``EventData`` fields **flattened to top level under their original
-    names** (``TargetUserName``, ``LogonType``, ``IpAddress``, ``GrantedAccess``,
-    …), because HELK's Winlogbeat pipeline applies ``field_nest_cleanup``.
+  * the Windows ``EventData`` fields flattened to top level, but HELK's Logstash
+    pipeline **renames a subset of them** — ``SourceImage``/``TargetImage`` become
+    ``process_path``/``target_process_path``, ``LogonType`` becomes lower-case
+    ``logon_type`` — while others keep their original names (``TargetUserName``,
+    ``GrantedAccess``, ``WorkstationName``).
 
-The engine's flat-envelope parser keys on ``Channel``/``Hostname``/``EventID``/
-``EventTime``; COMISET uses ``log_name``/``host_name``/``event_id``/``@timestamp``.
-The only COMISET-specific transform, therefore, is to add those aliases — the
-flattened event fields already sit exactly where ``_FIELD_MAPS`` looks for them.
-Everything else is the identical production path, which is the point: no
-COMISET-specific field parsing exists.
+The COMISET-specific transform is therefore two small alias tables
+(``comiset_source_to_raw``): the envelope names (``log_name``→``Channel`` …) and
+the renamed EventData fields the engine's views need, both restored to what
+``_FIELD_MAPS`` and the graph views look for. With those in place the record flows
+through the identical production ``normalize_event`` path — no COMISET-specific
+field *parsing* exists, only the name restoration HELK's rewriting makes necessary.
+
+What COMISET's lab actually exercises (measured, not assumed): ``proc_access`` from
+Sysmon-10 is rich; ``user_src`` is thin (only a minority of 4624 carry a
+``WorkstationName`` and none carry ``IpAddress``); and 4768/4769/4662 are absent
+(those audit subcategories were not enabled), so ``kerb_ctx``/``tgs_enc`` and the
+4662 ``dir_op`` edge have no data on this corpus.
 
 Records are grouped by HELK ``_index`` bucket (``…-winevent-additional-…``,
 ``…-security-…``, ``…-sysmon-…``, …). The Security and Sysmon buckets — the ones
@@ -70,13 +78,27 @@ COMISET_FILES = {
 }
 
 # HELK/Winlogbeat envelope field -> the alias the production flat-envelope parser
-# (parsing.normalize._extract_envelope) already recognises. This is the whole of
-# the COMISET-specific transform.
+# (parsing.normalize._extract_envelope) already recognises.
 _ENVELOPE_ALIASES = (
     ("event_id", "EventID"),
     ("log_name", "Channel"),
     ("host_name", "Hostname"),
     ("@timestamp", "EventTime"),
+)
+
+# COMISET is HELK-normalised, and HELK's Logstash pipeline RENAMES a number of the
+# Windows EventData fields the engine's views depend on — not just the envelope.
+# These renames were read off the real archive (a Sysmon-10 record carries
+# ``process_path``/``target_process_path``, not ``SourceImage``/``TargetImage``; a
+# 4624 carries a lower-case ``logon_type``, not ``LogonType``). Without restoring
+# the names ``_FIELD_MAPS`` looks for, a real COMISET auth/Sysmon event parses to
+# the right event *type* but with empty view-critical fields, so it projects no
+# graph edge — which is why the first pass measured zero edges. Aliases are added,
+# never overwritten, so an event that already uses the canonical name is untouched.
+_FIELD_ALIASES = (
+    ("process_path", "SourceImage"),          # Sysmon 8/10 source process image
+    ("target_process_path", "TargetImage"),   # Sysmon 8/10 target process image
+    ("logon_type", "LogonType"),              # 4624/4625 logon type
 )
 
 _ZIP_SPAN_MARKER = b"PK\x07\x08"   # leading marker of a split/spanned zip
@@ -100,7 +122,7 @@ def comiset_source_to_raw(record: dict) -> dict:
     if not isinstance(source, dict):
         return record
     raw = dict(source)
-    for helk_key, alias in _ENVELOPE_ALIASES:
+    for helk_key, alias in (*_ENVELOPE_ALIASES, *_FIELD_ALIASES):
         if alias not in raw and source.get(helk_key) is not None:
             raw[alias] = source[helk_key]
     return raw
@@ -164,6 +186,76 @@ def read_comiset_events(source: Union[str, Path],
         event = normalize_event(comiset_source_to_raw(record), keep_raw=keep_raw)
         if event is not None:
             yield event
+
+
+def _iter_deflate_ndjson(read_chunk, first: bytes,
+                         max_uncompressed_bytes: int) -> Iterator[dict]:
+    """Inflate a raw-deflate zip member incrementally and yield JSON records.
+
+    ``first`` is the leading bytes already read (enough to hold the local file
+    header); ``read_chunk()`` returns the next compressed chunk or ``b""`` at end.
+    Decompression is bounded and line-buffered so neither the compressed input nor
+    the inflated output is ever held whole — the point of streaming a member that
+    inflates to tens of GB. A trailing partial line (from a truncated/prefix
+    stream) is dropped rather than mis-parsed.
+    """
+    off = len(_ZIP_SPAN_MARKER) if first[:4] == _ZIP_SPAN_MARKER else 0
+    if first[off:off + 4] != _ZIP_LOCAL_HEADER:
+        raise ValueError("not a zip local file header")
+    fn_len = struct.unpack("<H", first[off + 26:off + 28])[0]
+    extra_len = struct.unpack("<H", first[off + 28:off + 30])[0]
+    method = struct.unpack("<H", first[off + 8:off + 10])[0]
+    if method not in (0, 8):
+        raise ValueError(f"unexpected zip compression method {method}")
+    data_start = off + 30 + fn_len + extra_len
+
+    dec = zlib.decompressobj(-15) if method == 8 else None
+    produced = 0
+    tail = ""
+    compressed = first[data_start:]
+    while True:
+        if method == 8:
+            chunk = dec.decompress(compressed, 8 << 20)
+            leftover = dec.unconsumed_tail
+        else:
+            chunk, leftover = compressed[:8 << 20], compressed[8 << 20:]
+        if chunk:
+            produced += len(chunk)
+            tail += chunk.decode("utf-8", errors="replace")
+            lines = tail.split("\n")
+            tail = lines.pop()                 # keep the (possibly partial) last line
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+        if produced >= max_uncompressed_bytes:
+            return
+        if leftover:
+            compressed = leftover
+            continue
+        compressed = read_chunk()
+        if not compressed:
+            return
+
+
+def iter_comiset_archive(path: Union[str, Path],
+                         max_uncompressed_bytes: int = 1 << 62,
+                         read_chunk_bytes: int = 4 << 20) -> Iterator[dict]:
+    """Yield raw records from a local COMISET ``.zip`` by chunked raw inflation.
+
+    Unlike :func:`read_comiset_records` (which uses ``zipfile`` and needs the
+    archive's central directory at end-of-file), this reads the single member's
+    deflate stream directly, so it works on a **partial or still-downloading**
+    archive and never materialises the inflated data. ``max_uncompressed_bytes``
+    bounds the work for a first-look evaluation over a rich prefix.
+    """
+    with open(path, "rb") as fh:
+        first = fh.read(read_chunk_bytes)
+        yield from _iter_deflate_ndjson(
+            lambda: fh.read(read_chunk_bytes), first, max_uncompressed_bytes)
 
 
 def stream_comiset_head(url: str, max_uncompressed_bytes: int = 64 * 1024 * 1024,

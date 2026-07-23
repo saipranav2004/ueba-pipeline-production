@@ -22,10 +22,12 @@ dataset provides both:
 
 Claim 1 (ingestion correctness) is **done** on real data — OTRF, and now COMISET,
 whose adapter is verified against the live archive (below). Claim 2 (detection
-performance) is **not**: it needs a labelled corpus with a real benign background.
-LANL is behind a data-use agreement; COMISET is not, but closing Claim 2 on it
-still requires the full multi-GB download and resolving its attack-label scheme —
-work the ingestion adapter sets up but does not itself complete.
+performance) is **partly** done: COMISET yielded a first real-data measurement
+(below) that corroborates the `proc_access` benign-novelty premise on real Windows
+telemetry — but not a lateral-movement recall number, because COMISET's lab
+captures no Kerberos/DC telemetry and its labels are mostly non-relational. A real
+recall figure for the class the engine targets still needs LANL (behind a DUA) or a
+corpus that records that telemetry.
 
 ## Datasets researched
 
@@ -126,6 +128,50 @@ COMISET remains the only identified corpus supplying labels *and* a real benign
 background *and* permissive redistribution — the combination detection-performance
 measurement requires.
 
+### First real-data measurement on COMISET
+
+`comiset-eval` (`ueba_pipeline/evaluation/comiset_eval.py`) was run over a 6 GiB
+streamed prefix of the lab archive — 366,256 graph-relevant events, 384 of them
+carrying COMISET's inline `rule_technique_id` label. It reports two things, and the
+first is the one that matters most.
+
+**Real per-view benign novelty — the simulator premise, tested on real telemetry.**
+The engine's entire view-admission logic rests on how often a *benign* edge is
+novel; the audit's deepest objection is that the low rates driving the design are
+simulator artefacts. Fitting the production engine (held-out null calibration) on
+COMISET's real benign Windows telemetry:
+
+| view | real edges | real benign novelty | simulator |
+|---|---|---|---|
+| `proc_access` | 103,838 | **0.5%** | ~0.1% |
+| `user_src` | 185 | 30.3% | 4.4% (device-keyed) |
+
+**`proc_access` validates on real data**: a novel process-access relationship is
+genuine evidence on genuine Windows Sysmon-10 telemetry, at 0.5% benign novelty —
+the same order as the simulator, and far below the ~72% that made the object-keyed
+`dir_op` variant unusable. This is the first real-data corroboration of a core
+design premise. `user_src` cannot be judged here: COMISET's 4624 events mostly
+carry no source device (only ~185 usable edges), so 30.3% is small-sample noise,
+not a refutation.
+
+**Per-authentication ROC** (production per-view scoring, `contamination=none`):
+**AUC 0.665, TPR 0.089 @ 0.9% FPR** on 112 labelled test events. This is honestly
+modest, and the reason is structural, not a tuning gap: only **220 of 384** labelled
+attacks project any modelled relation at all. COMISET's labels are dominated by
+process-level techniques — T1055 injection, T1036 masquerading, T1047 WMI, T1204
+execution — that leave no relationship for a relational engine to score, exactly
+the blind spot the engine documents for NTDS extraction and account manipulation.
+The lateral-movement and Kerberos telemetry the engine is built for is **absent**
+from COMISET's lab (no 4768/4769/4662 — those audit subcategories were not
+enabled), so this corpus cannot measure the engine on the class it targets. The
+number is a real-data floor on an unfavourable label mix, not a lateral-movement
+recall.
+
+Caveats carried in the tool output: COMISET's labels are its own rule-based tags
+(not curated truth); the prefix is `_index`-ordered, not strictly time-contiguous;
+and the per-event ROC uses the simpler in-sample null calibration of `lanl-eval`,
+not the held-out calibration the product ships.
+
 **Why OTRF was adopted first.** It is the only source that is simultaneously real
 Windows/Sysmon telemetry, ATT&CK-labelled, and downloadable over plain HTTP with
 no data-use agreement — so it can be wired into CI. Its captures clear the event
@@ -191,22 +237,27 @@ python -m pytest tests/unit/test_comiset_adapter.py -q
 # COMISET opt-in: stream + parse the live archive head (needs network, no full download)
 UEBA_RUN_COMISET_DOWNLOAD=1 python -m pytest \
     tests/unit/test_comiset_adapter.py::test_real_comiset_head_streams_and_parses -q
+
+# COMISET real-data eval (needs a downloaded/partial lab .zip; reads a bounded prefix)
+python -m ueba_pipeline.cli.main comiset-eval --archive /path/to/Comiset23_Lab_Environment_Dataset.zip
 ```
 
 ## Remaining gap (stated plainly)
 
-Detection recall and false-positive rate on real data are still unmeasured,
-because that needs a labelled real corpus with a benign background. Two paths are
-now open, and both are ingestion-ready:
+A **first real-data measurement now exists** (see *First real-data measurement on
+COMISET* above): the `proc_access` low-benign-novelty premise holds on real Windows
+telemetry (0.5%), the first real corroboration of a core design decision. But a
+real recall / false-positive number for the class the engine targets — lateral
+movement and credential-relationship abuse — is still unmeasured:
 
-- **COMISET** is the nearer one — no data-use agreement, a real benign background,
-  and its adapter is implemented and verified against the live archive. What
-  remains is engineering, not access: pull the full ~4.9 GB lab archive, reach its
-  Security/Sysmon `_index` buckets, and map its attack labels onto the engine's
-  entity/time attribution (the Data in Brief paper documents the labelling).
-- **LANL 2015** remains the canonical lateral-movement benchmark and the
+- **COMISET's lab does not exercise that class**: it carries no 4768/4769/4662, so
+  `kerb_ctx`/`tgs_enc`/`dir_op` see no data, and its labels are dominated by
+  process-level techniques the relational engine cannot see. It validated the
+  benign side (novelty), not lateral-movement recall.
+- **LANL 2015** remains the canonical labelled lateral-movement benchmark and the
   `lanl-eval` harness is ready, but it sits behind a data-use agreement that must
   be accepted manually.
 
-Adopting OTRF and COMISET closes the ingestion-correctness question on real data;
-neither yet closes the detection-performance one.
+So: ingestion correctness is closed on real data (OTRF, COMISET); the `proc_access`
+benign premise is corroborated on real data (COMISET); real lateral-movement recall
+still needs LANL or a corpus that actually captures Kerberos/DC telemetry.

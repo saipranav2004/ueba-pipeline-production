@@ -6,6 +6,7 @@ Commands:
   score-stream      load bundle -> score online, adapting the baseline as it goes
   drift-check       compare a live window's capabilities against the trained bundle
   walk-forward-eval causal out-of-time evaluation of the engine
+  comiset-eval      real-data eval on a COMISET archive (benign novelty + per-auth ROC)
   model-benchmark   compare classical models on the feature matrix (leakage-resistant)
   lanl-eval         per-authentication ROC on LANL 2015 (or a LANL-format fixture)
   graph-viz         render the identity graph to standalone HTML
@@ -151,6 +152,20 @@ def cmd_walk_forward(args: argparse.Namespace) -> None:
     print(render(results, args.data_dir))
 
 
+def cmd_comiset_eval(args: argparse.Namespace) -> None:
+    """Real-data evaluation on a COMISET archive: real per-view benign novelty
+    rates (no labels) and a per-authentication ROC against COMISET's inline
+    technique labels. See evaluation/comiset_eval.py for the caveats — this is a
+    first real-data signal on a streamed prefix, not a product claim."""
+    from ueba_pipeline.evaluation.comiset_eval import evaluate_comiset
+
+    report = evaluate_comiset(
+        args.archive, max_events=args.max_events,
+        max_uncompressed_bytes=int(args.max_gib * (1 << 30)),
+        train_fraction=args.train_fraction)
+    print(report.render())
+
+
 def cmd_model_benchmark(args: argparse.Namespace) -> None:
     """Compare classical models on the behavioural feature matrix under the four
     leakage-resistant split protocols, with the shipped detector as a reference
@@ -247,6 +262,18 @@ def main() -> None:
                            "(upper bound, unavailable in production); 'none' is the "
                            "unlabelled cold start. Both bounds measure identically.")
     p_wf.set_defaults(func=cmd_walk_forward)
+
+    p_ce = sub.add_parser("comiset-eval",
+                          help="Real-data eval on a COMISET archive: per-view benign "
+                               "novelty + per-auth ROC on inline technique labels")
+    p_ce.add_argument("--archive", required=True,
+                      help="path to a COMISET .zip (may be partial/still downloading)")
+    p_ce.add_argument("--max-events", type=int, default=1_500_000,
+                      help="cap graph-relevant events collected (memory bound)")
+    p_ce.add_argument("--max-gib", type=float, default=6.0,
+                      help="cap inflated bytes read from the archive prefix")
+    p_ce.add_argument("--train-fraction", type=float, default=0.6)
+    p_ce.set_defaults(func=cmd_comiset_eval)
 
     p_mb = sub.add_parser("model-benchmark",
                           help="Compare classical models on the feature matrix under "
