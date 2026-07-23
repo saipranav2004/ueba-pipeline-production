@@ -104,9 +104,11 @@ against a real baseline rather than "the attack is the only such event."
 ## Usage
 
 ```bash
-# Evaluation estate: all techniques, balanced across the timeline
+# Evaluation estate: the ten headline techniques, balanced across the timeline.
+# Use `headline` (not `all`) to reproduce the 53/60 figure — `all` also injects
+# the separately-measured insider corpus. See docs/evaluation.md.
 python run_simulation.py --days 20 --seed 20250106 \
-    --inject-attacks all --attack-count 30 --attack-placement spread
+    --inject-attacks headline --attack-count 30 --attack-placement spread
 
 # Normal activity only (no attacks)
 python run_simulation.py --days 20
@@ -119,7 +121,9 @@ Options:
 
 - `--days N` — simulate the first N business days.
 - `--seed N` — random seed for reproducible runs.
-- `--inject-attacks LIST` — comma-separated scenarios or `all`.
+- `--inject-attacks LIST` — comma-separated scenarios, or a preset: `headline`
+  (the ten credential/lateral-movement techniques the recall figure is measured
+  over) or `all` (every registered attack, incl. the separate insider corpus).
 - `--attack-count N` — number of attack instances to inject.
 - `--attack-placement MODE` — `spread` (balanced, seed-varied coverage of every
   technique across the timeline; use for evaluation), `tail` (all attacks in the

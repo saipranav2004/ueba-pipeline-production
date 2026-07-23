@@ -10,11 +10,22 @@ export UEBA__SECURITY__MODEL_SIGNING_KEY=$(python -c "import secrets;print(secre
 
 for s in 20250106 20250107 20250108 20250109 20250110 20250111; do
   python enterprise_simulator/run_simulation.py --days 20 --seed $s --quiet \
-      --inject-attacks all --attack-count 30 --attack-placement spread
+      --inject-attacks headline --attack-count 30 --attack-placement spread
   python -m ueba_pipeline.cli.main walk-forward-eval \
       --data-dir enterprise_simulator/output --contamination none
 done
 ```
+
+**Use `--inject-attacks headline`, not `all`, to reproduce the figure below.**
+The headline is measured over the **ten** credential-theft / lateral-movement
+techniques. `insider_data_staging` (volume abuse over an established
+relationship) is a different attack class the relational engine cannot see; it is
+measured as its own corpus ("Open capability: volume abuse", below), never folded
+into this total. It lives in `ATTACK_REGISTRY`, so `--inject-attacks all` injects
+it too and yields a different, non-comparable number (48/60 including its 0/7).
+The `headline` preset pins the ten so the figure stays reproducible as the
+registry grows (`attacks.HEADLINE_ATTACKS`; guarded by
+`tests/unit/test_attack_presets.py`).
 
 ## Results
 
@@ -143,6 +154,7 @@ Every component is held to measured contribution.
 | `dir_op` view | keyed on operation class (9.1% benign novelty) not object touched (72%) | keep |
 | volumetric (ECOD) track | 15/60 alone; fused 29/60 at 3.88 FP/day against 43/60 at 3.46 for the detector alone | **removed** |
 | peer track (Poisson MF) | added no technique the edge model missed; dense O(users × dests) state | **removed** |
+| EVT (peaks-over-threshold) tail | 53/60 → 53/60 at 3.31 FP/day, unchanged; the `1/(n+1)` floor is not a binding constraint here | **removed** |
 
 `train` reports each view's benign novelty rate, which is the measurable test of
 whether a relationship type can carry signal at all:
@@ -291,6 +303,51 @@ Wiring it to the pure path so it could fire produced a clear verdict:
 It buys five insider detections for ten elsewhere and 0.7 additional
 false-positive entities a day, because benign repetition is ordinary and a raw
 repeat count fires on it. Removed.
+
+## An extreme-value tail was measured and removed
+
+The strongest external recommendation for this engine (the audit in `research
+findings/`, following Siffer et al., KDD 2017) was to break the `1/(n+1)`
+empirical-null floor with an Extreme Value Theory tail — a peaks-over-threshold
+Generalized-Pareto model — so a sparse view could resolve a genuine extreme below
+its floor. The account-manipulation miss (1/5) was the named target: the `dir_op`
+null holds only a few dozen benign observations, so its floor is ~0.03, and the
+hope was that an unclamped tail would let a floored directory-change signal
+survive the Šidák correction.
+
+It was built (GPD by method of moments, with the shape **pooled across views** —
+shared shape, per-view scale — so the sparse `dir_op` view could borrow a tail it
+has too few points to fit alone) and measured off vs on on the identical six
+headline estates:
+
+| EVT tail | headline recall | FP/day | account manipulation |
+|---|---|---|---|
+| **off (shipped)** | **53/60** | **3.31** | 1/5 |
+| on | 53/60 | 3.31 | 1/5 |
+
+**Zero change, every technique, every seed.** The diagnosis is specific and it
+refutes the premise. Two things were confirmed by instrumenting the scorer:
+
+- **The floor is not a binding constraint here.** The high-volume views already
+  floor near 1e-4 (n in the thousands), far below anything the ranking turns on,
+  so a tail changes nothing for them.
+- **The account-manipulation limit is attribution, not resolution.** The floored
+  attacks *do* score extremely — a non-admin's privileged operation reaches a
+  `dir_op` surprise of 9.2 nats, above the largest benign surprise the slice ever
+  produced (8.4) — but the principals are active admin-like accounts that already
+  rank inside the alert budget on ordinary activity, and the attack hour is not
+  their single most anomalous hour, so strict attribution fails regardless. And an
+  honest GPD fit to a few dozen points is *more* conservative than the floor at
+  9.2 nats (it cannot assert the extreme is rarer than its own sparse evidence
+  supports), so even unclamping does not push the attack hour past the principal's
+  own noisy baseline.
+
+The idea is sound where a sparse view carries a signal that *is* the entity's peak
+— which needs a real estate with a genuine sparse-but-discriminating view, not
+this simulator's active-admin directory traffic. On the evidence available it adds
+no measurable value, so it was removed rather than shipped dark; the mechanism is
+recorded here so it is not re-attempted without the conditions that would make it
+pay.
 
 ## Open capability: volume abuse over an established relationship
 
@@ -451,13 +508,22 @@ Windows Security and Sysmon captures.
    longer a pure floor, but a simulator cannot reproduce shared/kiosk hosts,
    service-account sprawl, M&A estates, or cloud identity. This is the largest
    open risk; only a labelled real corpus retires it.
-2. **Account manipulation (1/5).** An evidence limit, not a tuning failure. The
-   `dir_op` view sees ~27 benign directory operations in the calibration slice, so
-   its null floors the smallest assertable p at `1/(n+1) ~ 0.036`; after
-   correcting for the hours an entity is observed, that rarely reaches the top of a
-   250-entity queue however anomalous the behaviour is. Rare-operation views need
-   a baseline measured in months. A Tier-0 watchlist would short-circuit it with
-   directory context, which is a rule, not behaviour.
+2. **Account manipulation (1/5).** An evidence limit, not a tuning failure — and
+   the mechanism is more specific than "the null floors". The `dir_op` view sees
+   only a few dozen benign operations in the calibration slice, so its null floors
+   the smallest assertable p at `1/(n+1) ~ 0.03`. But the deeper cause is
+   **attribution**: the principals are active admin-like accounts that already sit
+   inside the alert budget on their ordinary activity, and the injected operation
+   is not their single most anomalous hour, so it fails strict attribution
+   (peak-hour-in-span) even when the account alerts. **Breaking the floor does not
+   fix this**, and that was measured: a non-admin performing a privileged
+   directory change scores a `dir_op` surprise of ~9.2 nats — *above* the largest
+   benign surprise the calibration slice ever produced (~8.4) — yet an honest
+   Generalized-Pareto tail fit to a few dozen points assigns it a p *more*
+   conservative than the empirical floor, so it still cannot beat the principal's
+   own noisy baseline hours ("An extreme-value tail was measured and removed",
+   below). The remedies that would work here are not behavioural: a Tier-0
+   watchlist (directory context, i.e. a rule) or a baseline measured in months.
 3. **NTDS dump (0/2).** Its tools (`vssadmin`, `ntdsutil`) run legitimately on
    domain controllers, so it leaves no novel relational trace; the discriminating
    signal is a command line or an execution sequence.
@@ -468,10 +534,14 @@ Windows Security and Sysmon captures.
 
 1. **Run `lanl-eval` and `model-benchmark` on real LANL 2015 / 2017.** Nothing
    else settles the circularity of measuring on a self-authored estate.
-2. **Sparse-view resolution** for account manipulation: empirical-Bayes pooling
-   across related cells, and Extreme Value Theory (peaks-over-threshold) to break
-   the `1/(n+1)` floor. Success criterion: recall > 0 on real labelled data
-   *without* any attack-specific rule.
+2. **Sparse-view resolution** for account manipulation. Extreme Value Theory
+   (peaks-over-threshold) was tried and **did not help on this estate** — see "An
+   extreme-value tail was measured and removed" — because the binding limit here
+   is attribution, not the `1/(n+1)` floor. Empirical-Bayes pooling across related
+   cells remains untried; revisit both on real labelled data, where a sparse view
+   may carry a signal an active principal's own baseline does not already drown.
+   Success criterion: recall > 0 on real labelled data *without* any
+   attack-specific rule.
 3. **A periodicity / non-human-identity model class** (Fourier g-test edge
    classification) for service accounts.
 4. **Scale test** beyond a few hundred identities; adopt count-min sketching if

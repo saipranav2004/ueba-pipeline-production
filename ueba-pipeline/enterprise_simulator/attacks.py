@@ -755,3 +755,20 @@ ATTACK_REGISTRY = {
     "account_manipulation": inject_account_manipulation,
     "insider_data_staging": inject_insider_data_staging,
 }
+
+# The insider data-staging corpus (T1005) is a DIFFERENT attack class from the
+# credential-theft / lateral-movement techniques above: it creates no new
+# relationship, only an abnormal *rate* over an existing one, so the relational
+# engine cannot see it and it is measured as its own corpus (docs/evaluation.md,
+# "Open capability: volume abuse over an established relationship"), never folded
+# into the headline recall. It stays in ATTACK_REGISTRY so `--inject-attacks all`
+# can still generate it, but it is excluded from the headline preset below.
+#
+# This split exists because `all` silently changed meaning once this corpus was
+# added: the documented headline (53/60 over ten techniques) is reproduced by
+# `--inject-attacks headline`, NOT by `--inject-attacks all` (which now injects
+# eleven techniques and mixes the separately-measured insider corpus into the
+# total). Keeping the headline set named and explicit is what keeps the figure
+# reproducible as the registry grows.
+INSIDER_CORPUS_ATTACKS = ("insider_data_staging",)
+HEADLINE_ATTACKS = tuple(k for k in ATTACK_REGISTRY if k not in INSIDER_CORPUS_ATTACKS)

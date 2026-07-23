@@ -1,0 +1,42 @@
+"""The simulator's headline attack preset must stay reproducible as the registry grows.
+
+The documented 53/60 recall figure is measured over the ten credential-theft /
+lateral-movement techniques. ``insider_data_staging`` is a different attack class
+(volume abuse over an established relationship) measured as its own corpus, and it
+was added to ``ATTACK_REGISTRY`` after the headline was written -- silently
+changing what ``--inject-attacks all`` means and breaking reproduction of the
+headline via that flag. The ``headline`` preset (attacks.HEADLINE_ATTACKS) exists
+to pin the headline set explicitly; these tests guard that split so a future
+technique cannot re-introduce the drift unnoticed.
+"""
+import sys
+from pathlib import Path
+
+# The simulator is a sibling package to ueba_pipeline and imports its own modules
+# by bare name (``from attacks import ...``), so its root must be on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "enterprise_simulator"))
+
+from attacks import ATTACK_REGISTRY, HEADLINE_ATTACKS, INSIDER_CORPUS_ATTACKS
+
+
+def test_headline_and_corpus_partition_the_registry():
+    """Every registered attack is in exactly one of headline / insider corpus."""
+    headline, corpus = set(HEADLINE_ATTACKS), set(INSIDER_CORPUS_ATTACKS)
+    assert headline.isdisjoint(corpus)
+    assert headline | corpus == set(ATTACK_REGISTRY)
+
+
+def test_insider_corpus_is_excluded_from_headline():
+    """The insider corpus is measured separately, never inside the headline total."""
+    assert "insider_data_staging" in ATTACK_REGISTRY          # still injectable via `all`
+    assert "insider_data_staging" in INSIDER_CORPUS_ATTACKS
+    assert "insider_data_staging" not in HEADLINE_ATTACKS
+
+
+def test_headline_covers_the_ten_documented_techniques():
+    """The exact ten techniques docs/evaluation.md reports 53/60 over."""
+    assert set(HEADLINE_ATTACKS) == {
+        "pass_the_hash", "kerberoasting", "password_spray", "dcsync",
+        "asrep_roasting", "lsass_dump", "golden_ticket", "silver_ticket",
+        "ntds_dump", "account_manipulation",
+    }

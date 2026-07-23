@@ -52,7 +52,7 @@ from config.company import RANDOM_SEED, SIM_START_DATE, DEPARTMENTS, ADMIN_ACCOU
 from core.employees import (build_employee_roster, build_service_accounts,
                              stable_seed, roster_to_peer_group_map)
 from core.event_bus import EventBus
-from attacks import ATTACK_REGISTRY, AttackLabel
+from attacks import ATTACK_REGISTRY, HEADLINE_ATTACKS, AttackLabel
 from core.time_engine import (
     all_sim_dates, is_business_day, parse_date, AbsenceCalendar,
 )
@@ -491,10 +491,18 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
     attack_schedule: Dict[date, List[str]] = defaultdict(list)
     attack_labels: List[AttackLabel] = []
     if inject_attacks:
-        requested_types = (
-            list(ATTACK_REGISTRY.keys()) if inject_attacks == "all"
-            else [t.strip() for t in inject_attacks.split(",") if t.strip()]
-        )
+        # "all"      -> every registered attack (eleven; includes the insider
+        #               data-staging corpus measured separately from the headline).
+        # "headline" -> the ten credential-theft / lateral-movement techniques the
+        #               53/60 recall figure is measured over. Use this to reproduce
+        #               the headline; `all` mixes in the separately-reported insider
+        #               corpus and so yields a different, non-comparable total.
+        if inject_attacks == "all":
+            requested_types = list(ATTACK_REGISTRY.keys())
+        elif inject_attacks == "headline":
+            requested_types = list(HEADLINE_ATTACKS)
+        else:
+            requested_types = [t.strip() for t in inject_attacks.split(",") if t.strip()]
         unknown = set(requested_types) - set(ATTACK_REGISTRY.keys())
         if unknown:
             raise ValueError(
@@ -748,8 +756,12 @@ if __name__ == "__main__":
                         help="Suppress per-day progress output")
     parser.add_argument("--inject-attacks", type=str, default="",
                         help="Comma-separated attack types to inject "
-                             "(pass_the_hash,kerberoasting,password_spray), "
-                             "or 'all'. Off by default -- see attacks.py.")
+                             "(pass_the_hash,kerberoasting,password_spray), or a "
+                             "preset: 'headline' (the ten credential/lateral-"
+                             "movement techniques the 53/60 figure is measured "
+                             "over) or 'all' (every registered attack, including "
+                             "the separately-measured insider corpus). Off by "
+                             "default -- see attacks.py.")
     parser.add_argument("--dump-roster", type=str, default=None,
                          help="Path to write the peer-group roster JSON "
                               "({samaccountname.lower(): department}) that "

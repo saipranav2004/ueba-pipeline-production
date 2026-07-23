@@ -53,9 +53,11 @@ is validated separately — see [docs/datasets.md](docs/datasets.md).
 pip install -r requirements-dev.txt
 export UEBA__SECURITY__MODEL_SIGNING_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")
 
-# 1. Generate an estate with injected attacks
+# 1. Generate an estate with injected attacks. `headline` = the ten
+#    credential/lateral-movement techniques the recall figure is measured over;
+#    `all` also injects the separately-measured insider corpus (see docs/evaluation.md).
 python enterprise_simulator/run_simulation.py --days 20 --seed 20250106 \
-    --inject-attacks all --attack-count 30 --attack-placement spread
+    --inject-attacks headline --attack-count 30 --attack-placement spread
 
 # 2. Fit the engine -> signed, non-executable bundle
 python -m ueba_pipeline.cli.main train \
