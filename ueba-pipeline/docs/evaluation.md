@@ -232,9 +232,10 @@ This is a deliberate divergence from the published baseline: Bowman et al. (RAID
 2020) use source-computer → destination-computer edges as the *primary* signal on
 LANL, at ~0.85 TPR / 0.9% FPR. That setting has no account-to-device view
 available — a flat authentication log makes host-to-host the richest relation
-obtainable. Here the account→device view exists and strictly dominates it. The
-view remains selectable via `AuthGraphConfig.enabled_views` for a deployment
-whose telemetry lacks a usable device identity.
+obtainable. Here the account→device view exists and strictly dominates it, so the
+`src_dst` projection was removed from `edges_for` outright. A deployment whose
+telemetry lacks a usable device identity would want it back; that means
+reintroducing the projection, not toggling a config flag.
 
 **Removed: `rare_proc`.** It detected nothing, in every configuration, across
 both estate revisions: 0/60 standalone and no change when dropped. A view that

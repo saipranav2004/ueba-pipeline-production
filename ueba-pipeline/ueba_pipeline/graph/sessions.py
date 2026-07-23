@@ -8,10 +8,11 @@ carries no account at all -- Sysmon ProcessAccess (EID 10) and ProcessCreate
 (EID 1) name a host and an image, never the user whose session spawned them.
 
 Attributing those to the hostname would put the signal on the wrong entity and
-split the engine across two entity spaces: the volumetric track emits only
-accounts, so ``_rollup`` would rank a mixed population of users and hosts, and
-hosts -- absent from the window map -- would get an under-corrected Sidak and
-compete unfairly for the top of the queue.
+split the engine across two entity spaces. All alerting is over accounts, so
+``_rollup`` would then rank a mixed population of users and hosts, and a host --
+absent from the ``(entity, window)`` map that counts how many tests each entity
+received -- would get an under-corrected Sidak and compete unfairly for the top of
+the queue.
 
 WHAT THIS DOES
 --------------

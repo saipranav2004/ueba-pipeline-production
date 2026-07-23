@@ -160,14 +160,16 @@ class GraphRiskReport:
 class IdentityGraph:
     """Builds and analyzes an identity/access graph for structural risk scoring.
 
-    The graph is populated from multiple sources:
-    - AD event logs (4728/4732 = group membership, 5136 = attribute modification)
-    - IDP connector events (Entra directory roles, Okta group assignments)
-    - Enterprise simulator roster data (departments, server access, roles)
-    - Manually configured trust relationships
+    The graph is built from directory *state* via ``load_from_roster``: a roster
+    (user -> department) plus optional admin accounts, service accounts, servers
+    and domain controllers. Real deployments load the same shape from AD / LDAP /
+    IDP directory APIs; the simulator emits it as ``directory.json`` / ``roster.json``.
 
-    Each node carries metadata (type, department, tier level, source_idp)
-    that enables cross-IDP identity correlation and tier-based risk weighting.
+    It is deliberately NOT built from the live event stream. Structural risk is a
+    property of the directory (who can reach a Tier-0 asset), so it is recomputed
+    on a rolling directory snapshot, not per event -- see the module docstring.
+    Each node carries metadata (type, department, tier level) used for tier-based
+    risk weighting and visual grouping.
     """
 
     def __init__(self, config: Optional[PipelineConfig] = None):
