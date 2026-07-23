@@ -119,9 +119,9 @@ it only has to finish inside the retrain window.
 
 ## Tuning
 
-Three of the four free parameters were measured to have no effect worth tuning
-(`alpha` is flat below its default; `absorb_surprise` and `tick_seconds` show no
-measurable effect at all). `null_calibration_fraction` does matter — 0.15 costs
+Two of the three free parameters do not move batch detection (`alpha` is flat below
+its default; `absorb_surprise` governs only the streaming baseline, since batch
+`score()` never absorbs). `null_calibration_fraction` does matter — 0.15 costs
 seven detections against the default 0.30 — and should be selected on a
 validation estate held apart from whatever estate performance is reported on.
 See [evaluation.md](evaluation.md).

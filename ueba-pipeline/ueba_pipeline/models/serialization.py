@@ -44,7 +44,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-SERIALIZATION_VERSION = "2.0.0"
+SERIALIZATION_VERSION = "3.0.0"
 _SIGNING_KEY_ENV = "UEBA__SECURITY__MODEL_SIGNING_KEY"
 
 _STATE_NAME = "engine.json"
@@ -105,15 +105,11 @@ def _edge_from_key(key: str) -> Tuple[str, str]:
 def graph_to_state(graph) -> dict:
     cfg = graph.config
     edges = {
-        view: {
-            _edge_key(edge): [st.total, st.tick_count, st.active_ticks, st.last_tick]
-            for edge, st in view_edges.items()
-        }
+        view: {_edge_key(edge): count for edge, count in view_edges.items()}
         for view, view_edges in graph._edges.items()
     }
     return {
         "config": {
-            "tick_seconds": cfg.tick_seconds,
             "alpha": cfg.alpha,
             "absorb_surprise": cfg.absorb_surprise,
         },
@@ -125,8 +121,6 @@ def graph_to_state(graph) -> dict:
         "src_totals": graph._src_totals,
         "dst_totals": graph._dst_totals,
         "view_totals": dict(graph._view_totals),
-        "global_tick": graph._global_tick,
-        "ticks_seen": graph._ticks_seen,
     }
 
 
@@ -134,7 +128,7 @@ def graph_from_state(state: dict):
     from collections import defaultdict
 
     from ueba_pipeline.graph.auth_graph_anomaly import (
-        AuthGraphAnomalyDetector, AuthGraphConfig, _EdgeState,
+        AuthGraphAnomalyDetector, AuthGraphConfig,
     )
 
     cfg = AuthGraphConfig(**state["config"])
@@ -142,11 +136,8 @@ def graph_from_state(state: dict):
 
     for view, view_edges in state["edges"].items():
         target = graph._edges[view]
-        for key, (total, tick_count, active_ticks, last_tick) in view_edges.items():
-            target[_edge_from_key(key)] = _EdgeState(
-                total=float(total), tick_count=float(tick_count),
-                active_ticks=int(active_ticks), last_tick=int(last_tick),
-            )
+        for key, count in view_edges.items():
+            target[_edge_from_key(key)] = float(count)
     for view, keys in state["seen"].items():
         graph._seen[view] = {_edge_from_key(k) for k in keys}
     for view, principals in state["principals"].items():
@@ -156,8 +147,6 @@ def graph_from_state(state: dict):
     graph._src_totals = {v: dict(m) for v, m in state["src_totals"].items()}
     graph._dst_totals = {v: dict(m) for v, m in state["dst_totals"].items()}
     graph._view_totals = defaultdict(float, state["view_totals"])
-    graph._global_tick = int(state["global_tick"])
-    graph._ticks_seen = int(state["ticks_seen"])
     return graph
 
 

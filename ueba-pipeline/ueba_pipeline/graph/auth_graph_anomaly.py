@@ -89,14 +89,6 @@ def _source_identity(fields) -> str:
 
 
 @dataclass
-class _EdgeState:
-    total: float = 0.0            # times this edge has been observed
-    tick_count: float = 0.0       # occurrences within last_tick
-    active_ticks: int = 0         # distinct ticks the edge appeared in
-    last_tick: int = -1
-
-
-@dataclass
 class AuthGraphConfig:
     """Configuration for the graded edge-surprise scorer.
 
@@ -106,7 +98,6 @@ class AuthGraphConfig:
     what lets one threshold separate routine churn from a genuine first contact.
     """
 
-    tick_seconds: int = 3600       # graph time resolution (1 hour)
     # Dirichlet concentration for the back-off to the global destination
     # marginal. alpha -> 0 trusts the per-source history completely (every novel
     # edge becomes infinitely surprising); alpha -> inf ignores it. 1.0 is the
@@ -136,10 +127,12 @@ class AuthGraphAnomalyDetector:
     """
 
     config: AuthGraphConfig = field(default_factory=AuthGraphConfig)
-    _edges: Dict[str, Dict[Tuple[str, str], _EdgeState]] = field(default_factory=lambda: defaultdict(dict))
+    # Per (view, edge) observation count — the c_ab the Dirichlet conditional
+    # needs. A plain float per edge: the burst term that once tracked per-tick
+    # repetition here was measured and removed (see module docstring), leaving the
+    # cumulative count as the only per-edge statistic scoring reads.
+    _edges: Dict[str, Dict[Tuple[str, str], float]] = field(default_factory=lambda: defaultdict(dict))
     _seen: Dict[str, set] = field(default_factory=lambda: defaultdict(set))
-    _global_tick: int = 0
-    _ticks_seen: int = 0
     # Principals (edge source) seen per view during baseline. Used to gate
     # novelty for views where entities have a dense baseline: a *change* for a
     # known entity is meaningful, its first-ever appearance is not.
@@ -250,8 +243,7 @@ class AuthGraphAnomalyDetector:
         return out
 
     # -- scoring ------------------------------------------------------------
-    def score_event_views(self, event, absorb: bool = True,
-                          tick_counts: Optional[Dict] = None) -> "list[Tuple[str, float]]":
+    def score_event_views(self, event, absorb: bool = True) -> "list[Tuple[str, float]]":
         """Return ``[(view, surprise), ...]`` for every edge this event projects.
 
         Each view is scored independently so its surprise can be calibrated
@@ -260,29 +252,18 @@ class AuthGraphAnomalyDetector:
         to its own view rather than setting the bar for every other view.
 
         ``absorb`` folds each edge into the baseline unless it looks anomalous.
-
-        ``tick_counts`` carries how many times each edge has already been seen in
-        the current tick *by this caller*. Repetition is what the burst term
-        measures, and the baseline counters only advance when an edge is absorbed
-        — so a caller that scores without absorbing (batch scoring, which must
-        stay pure) has to supply this itself, or every event looks like the first
-        of its tick and the burst term can never fire. Passing a fresh mapping per
-        batch keeps scoring pure across calls while still seeing repetition within
-        one.
+        Repetition within a window is deliberately not scored: a MIDAS-style burst
+        term over it was measured and removed (see module docstring), so surprise
+        depends only on the cumulative access distribution, not on how many times
+        an edge recurs in one batch.
         """
-        tick = self._tick_of(event)
-        if tick is None:
+        if event.event_time is None:
             return []
         out: "list[Tuple[str, float]]" = []
         for view, edge in self.edges_for(event):
-            seen_this_tick = 0.0
-            if tick_counts is not None:
-                key = (view, edge, tick)
-                seen_this_tick = tick_counts.get(key, 0.0)
-                tick_counts[key] = seen_this_tick + 1.0
-            s = self._score_edge(view, edge, tick, seen_this_tick)
+            s = self._surprise(view, edge)
             if absorb:
-                self._absorb(view, edge, tick, s)
+                self._absorb(view, edge, s)
             out.append((view, s))
         return out
 
@@ -295,18 +276,6 @@ class AuthGraphAnomalyDetector:
         """
         return max((s for _, s in self.score_event_views(event, absorb=absorb)),
                    default=0.0)
-
-    def _score_edge(self, view: str, edge: Tuple[str, str], tick: int,
-                    seen_this_tick: float = 0.0) -> float:
-        """Surprise for one edge, in nats.
-
-        Repetition within a tick is deliberately not scored here. A microcluster
-        term was measured against this model and removed: it cost ten detections
-        on the all-technique benchmark and 0.7 additional false-positive entities
-        a day, because benign repetition is common and a raw repeat count fires on
-        it. See docs/evaluation.md.
-        """
-        return self._surprise(view, edge)
 
     def _surprise(self, view: str, edge: Tuple[str, str]) -> float:
         """Bidirectional Dirichlet-smoothed edge surprise, in nats.
@@ -344,8 +313,7 @@ class AuthGraphAnomalyDetector:
         """
         src, dst = edge
         a = self.config.alpha
-        st = self._edges[view].get(edge)
-        c = st.total if st else 0.0
+        c = self._edges[view].get(edge, 0.0)
         total = self._view_totals[view]
 
         def _cond(counts_b, totals_a, key_a, key_b) -> float:
@@ -359,22 +327,13 @@ class AuthGraphAnomalyDetector:
         rev = _cond(self._src_counts, self._dst_totals, dst, src)   # P(src | dst)
         return max(fwd, rev)
 
-    def _absorb(self, view: str, edge: Tuple[str, str], tick: int, score: float) -> None:
+    def _absorb(self, view: str, edge: Tuple[str, str], score: float) -> None:
         # MIDAS-F: do not let a flagged edge normalise itself into the baseline.
         if score >= self.config.absorb_surprise:
             return
         self._seen[view].add(edge)
         self._principals[view].add(edge[0])
-        st = self._edges[view].get(edge)
-        if st is None:
-            st = _EdgeState()
-            self._edges[view][edge] = st
-        if st.last_tick != tick:
-            st.tick_count = 0.0
-            st.last_tick = tick
-            st.active_ticks += 1
-        st.tick_count += 1.0
-        st.total += 1.0
+        self._edges[view][edge] = self._edges[view].get(edge, 0.0) + 1.0
         for store, k in ((self._dst_counts, edge[1]), (self._src_counts, edge[0]),
                          (self._src_totals, edge[0]), (self._dst_totals, edge[1])):
             m = store.setdefault(view, {})
@@ -384,23 +343,12 @@ class AuthGraphAnomalyDetector:
     # -- baseline warmup ----------------------------------------------------
     def observe_baseline(self, event) -> None:
         """Fold a known-benign training event into the baseline (no scoring)."""
-        tick = self._tick_of(event)
-        if tick is None:
+        if event.event_time is None:
             return
         # Delegate to _absorb: one implementation of the baseline update, so a
         # change to the sufficient statistics cannot miss this path.
         for view, edge in self.edges_for(event):
-            self._absorb(view, edge, tick, score=0.0)
-
-    # -- ticks --------------------------------------------------------------
-    def _tick_of(self, event) -> Optional[int]:
-        if event.event_time is None:
-            return None
-        tick = int(event.event_time.timestamp() // self.config.tick_seconds)
-        if tick > self._global_tick:
-            self._global_tick = tick
-            self._ticks_seen += 1
-        return tick
+            self._absorb(view, edge, score=0.0)
 
 
 def _norm(v) -> str:

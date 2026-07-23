@@ -81,10 +81,14 @@ against becoming a rule catalogue: if each new technique needed its own gate, th
 model would be memorising rather than generalising. See [graph.md](graph.md) for
 the full set of views and how a new one is admitted on measured evidence.
 
-A microcluster term (MIDAS, Bhatia et al. AAAI 2020) adds a Poisson surprise for a
-sudden burst of the same edge within one tick, which is what fan-out, spray and
-rapid credential reuse look like. A flagged edge is **not** folded into the
-baseline (MIDAS-F), so an attacker cannot launder repeated abuse into normality.
+A MIDAS-style burst term (Bhatia et al. AAAI 2020) — extra surprise for a sudden
+repetition of one edge — was measured against this model and **removed**: it cost
+ten detections and 0.7 false-positive entities a day, because benign repetition is
+ordinary and a raw repeat count fires on it ([evaluation.md](evaluation.md)). What
+remains of the idea is **MIDAS-F non-absorption** (Bhatia et al. TKDD 2022): on the
+streaming path an edge whose surprise exceeds `absorb_surprise` is not folded into
+the baseline, so an attacker cannot launder repeated abuse into normality. Batch
+`score()` never absorbs, so this affects the streaming path only.
 
 ## 3. Combining evidence
 

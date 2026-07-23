@@ -28,7 +28,8 @@ measured evidence, not preference:
     correlated with the volumetric track (both functions of the same access
     counts), and carried a dense O(users x dests) rate matrix.
 
-Reproduce the volumetric comparison with `scripts/evaluate_volumetric_track.py`.
+The measured comparison for both removed tracks is recorded in
+docs/evaluation.md ("Component evidence").
 
 Raw scores are mapped through :class:`EmpiricalPValue` (frozen ECDF of the
 *training* benign distribution), so every view is commensurable. Per (entity,
@@ -258,17 +259,13 @@ class BehavioralEngine:
 
         by_view: Dict[str, list] = {}
         novelty: Dict[str, list] = {}          # view -> [edges_scored, edges_novel]
-        # The null must be measured with the same burst behaviour scoring uses,
-        # or it describes a different statistic from the one being scored.
-        calib_ticks: Dict = {}
         for e in calib_evs:
             for view, edge in self.graph.edges_for(e):
                 st = novelty.setdefault(view, [0, 0])
                 st[0] += 1
                 if edge not in self.graph._seen[view]:
                     st[1] += 1
-            for view, s in self.graph.score_event_views(
-                    e, absorb=False, tick_counts=calib_ticks):
+            for view, s in self.graph.score_event_views(e, absorb=False):
                 by_view.setdefault(view, []).append(s)
         self._graph_nulls = {
             view: EmpiricalPValue().fit(np.asarray(scores))
@@ -303,10 +300,8 @@ class BehavioralEngine:
         # silently misattribute months later.
         sessions = SessionResolver().fit(events, _norm)
         cell: Dict[Tuple[str, datetime], WindowDetection] = {}
-        tick_counts: Dict = {}
         for e in _time_sorted_graph_events(events):
-            self._score_graph_event(e, cell, absorb=False, sessions=sessions,
-                                     tick_counts=tick_counts)
+            self._score_graph_event(e, cell, absorb=False, sessions=sessions)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
         hours = [d.hour for d in detections] or [h for _, h in observed]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
@@ -382,8 +377,7 @@ class BehavioralEngine:
         return host or "endpoint"
 
     def _score_graph_event(self, e, cell: Dict, absorb: bool,
-                           sessions: Optional[SessionResolver] = None,
-                           tick_counts: Optional[Dict] = None) -> None:
+                           sessions: Optional[SessionResolver] = None) -> None:
         if not self._graph_nulls:
             return
         # Score each view against its own frozen null, then take the most
@@ -394,8 +388,7 @@ class BehavioralEngine:
         tested_edges = []
         for view, edge in self.graph.edges_for(e):
             tested_edges.append((view, edge))
-        for view, s in self.graph.score_event_views(
-                e, absorb=absorb, tick_counts=tick_counts):
+        for view, s in self.graph.score_event_views(e, absorb=absorb):
             null = self._graph_nulls.get(view)
             if null is not None:
                 ps.append(float(null.pvalue(s)[0]))

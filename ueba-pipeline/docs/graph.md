@@ -74,17 +74,19 @@ reverse conditional catches it — lsass has only ever been opened by wininit.
 Taking `max` of the two keeps each view's informative direction without
 hand-assigning one per view.
 
-### MIDAS burst
+### MIDAS-F non-absorption
 
-A microcluster term (Bhatia et al., AAAI 2020) added on top of surprise: many
-occurrences of one edge within a single tick, measured against that edge's normal
-active-hour rate. This is what surfaces fan-out and rapid credential reuse
-(password spray, a Kerberoasting sweep) that a single novel edge would understate.
+A MIDAS-style burst term (Bhatia et al., AAAI 2020) — extra surprise for repeated
+occurrences of one edge within a window — was measured against this model and
+**removed**: it cost ten detections and 0.7 false-positive entities a day, because
+benign repetition is ordinary (see [evaluation.md](evaluation.md)). Its per-window
+counters and time-resolution scaffolding were removed with it.
 
-MIDAS-F non-absorption (Bhatia et al., TKDD 2022): an edge scoring above
-`absorb_surprise` is not folded into the baseline, so an attacker cannot launder
-repeated abuse into normality. Surprise is unbounded above, so the threshold is
-reachable by construction.
+What remains is the non-absorption rule (MIDAS-F, Bhatia et al., TKDD 2022): on the
+streaming `absorb=True` path an edge scoring above `absorb_surprise` is not folded
+into the baseline, so an attacker cannot launder repeated abuse into normality.
+Surprise is unbounded above, so the threshold is reachable by construction. Batch
+`score()` never absorbs, so this rule governs the streaming path only.
 
 ## 2. Identity graph — structure (`graph/identity_graph.py`)
 

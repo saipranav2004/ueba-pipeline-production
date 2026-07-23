@@ -273,10 +273,12 @@ The detector carried a MIDAS-style burst term: a chi-squared surprise between an
 edge's current-tick count and its running mean, intended to catch fan-out, spray
 and rapid credential reuse.
 
-It never fired on the shipped path. Per-tick counters advance only when an edge is
+It never fired on the shipped path. Per-tick counters advanced only when an edge was
 *absorbed* into the baseline, and batch `score()` deliberately never absorbs, so
-every event looked like the first of its tick. This is why sweeping
-`tick_seconds` across a 24× range moved nothing.
+every event looked like the first of its tick. This is why sweeping the term's
+`tick_seconds` resolution across a 24× range moved nothing. With the term gone, that
+per-tick scaffolding — the counters and the `tick_seconds` parameter — was removed
+too; the only per-edge statistic scoring now reads is the cumulative count.
 
 Wiring it to the pure path so it could fire produced a clear verdict:
 
@@ -357,15 +359,17 @@ restate the search rather than measure the model.
 | parameter | range swept | spread | reading |
 |---|---|---|---|
 | `alpha` | 0.1 → 10 | 4 detections | flat from 0.1 to 1.0, degrading above 2.0 |
-| `absorb_surprise` | 6 → ∞ (no cap) | **0** | no measurable effect, even disabled |
-| `tick_seconds` | 900 → 21600 | **0** | no measurable effect |
+| `absorb_surprise` | 6 → ∞ (no cap) | **0** | cannot move batch detection — the batch path never absorbs; governs streaming non-absorption only |
 | `null_calibration_fraction` | 0.15 → 0.40 | **9 detections** | genuinely load bearing |
 
-**Three of the four parameters do not matter, which is the useful result.** The
-Dirichlet concentration is flat across an order of magnitude below its default, so
-`alpha = 1.0` sits on a plateau rather than a peak and needs no defence beyond
-being uninformative. The non-absorption threshold and the burst-term time
-resolution change nothing at all — see the note on the burst term below.
+**Two of the three parameters do not move batch detection, which is the useful
+result.** The Dirichlet concentration is flat across an order of magnitude below its
+default, so `alpha = 1.0` sits on a plateau rather than a peak and needs no defence
+beyond being uninformative. `absorb_surprise` cannot affect batch scoring at all —
+the batch path never absorbs — so its only role is the streaming baseline (MIDAS-F
+non-absorption); it is swept here to make that structural insensitivity explicit.
+(The burst term whose `tick_seconds` resolution once appeared in this table was
+measured and removed; see the note below.)
 
 **`null_calibration_fraction` is the exception and deserves care.** At 0.15 the
 held-out slice is too small to give the nulls resolution and recall falls to
@@ -446,10 +450,10 @@ Windows Security and Sysmon captures.
    longer a pure floor, but a simulator cannot reproduce shared/kiosk hosts,
    service-account sprawl, M&A estates, or cloud identity. This is the largest
    open risk; only a labelled real corpus retires it.
-2. **Account manipulation (0/5).** An evidence limit, not a tuning failure. The
+2. **Account manipulation (1/5).** An evidence limit, not a tuning failure. The
    `dir_op` view sees ~27 benign directory operations in the calibration slice, so
    its null floors the smallest assertable p at `1/(n+1) ~ 0.036`; after
-   correcting for the hours an entity is observed, that cannot reach the top of a
+   correcting for the hours an entity is observed, that rarely reaches the top of a
    250-entity queue however anomalous the behaviour is. Rare-operation views need
    a baseline measured in months. A Tier-0 watchlist would short-circuit it with
    directory context, which is a rule, not behaviour.

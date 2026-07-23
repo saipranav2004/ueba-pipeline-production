@@ -14,9 +14,10 @@ Parameters swept:
                               history completely; large values ignore it.
   absorb_surprise             Surprise above which an edge is not folded into the
                               baseline, so repeated abuse cannot be laundered.
+                              Governs the streaming path only; batch score() never
+                              absorbs, so it cannot move the batch benchmark.
   null_calibration_fraction   Share of training held out to measure each view's
                               benign null against a frozen baseline.
-  tick_seconds                Graph time resolution for the burst term.
 
 Usage:
     python scripts/sweep_hyperparameters.py [--bench-dir artifacts/bench]
@@ -86,7 +87,6 @@ def main() -> None:
     sweeps = {
         "alpha": [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
         "absorb_surprise": [6.0, 8.0, 10.0, 12.0, 16.0, 24.0, 1e9],
-        "tick_seconds": [900, 1800, 3600, 7200, 21600],
         "null_calibration_fraction": [0.15, 0.20, 0.30, 0.40, 0.50],
     }
 
@@ -109,7 +109,7 @@ def main() -> None:
 
 
 def _is_default(name: str, value) -> bool:
-    defaults = {"alpha": 1.0, "absorb_surprise": 12.0, "tick_seconds": 3600,
+    defaults = {"alpha": 1.0, "absorb_surprise": 12.0,
                 "null_calibration_fraction": 0.30}
     return defaults.get(name) == value
 
