@@ -114,7 +114,8 @@ ueba_pipeline/
   models/serialization.py       non-executable, signed JSON + NumPy bundle
   evaluation/honest_eval.py     product evaluation harness; drives the real engine
   evaluation/model_benchmark.py classical-model comparison + split protocols
-  evaluation/otrf_adapter.py    real Windows/Sysmon telemetry ingestion
+  evaluation/otrf_adapter.py    real Windows/Sysmon telemetry ingestion (OTRF/Mordor)
+  evaluation/comiset_adapter.py real HELK/Winlogbeat telemetry ingestion (COMISET)
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
