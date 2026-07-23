@@ -132,7 +132,6 @@ class AuthGraphAnomalyDetector:
     # repetition here was measured and removed (see module docstring), leaving the
     # cumulative count as the only per-edge statistic scoring reads.
     _edges: Dict[str, Dict[Tuple[str, str], float]] = field(default_factory=lambda: defaultdict(dict))
-    _seen: Dict[str, set] = field(default_factory=lambda: defaultdict(set))
     # Principals (edge source) seen per view during baseline. Used to gate
     # novelty for views where entities have a dense baseline: a *change* for a
     # known entity is meaningful, its first-ever appearance is not.
@@ -331,7 +330,6 @@ class AuthGraphAnomalyDetector:
         # MIDAS-F: do not let a flagged edge normalise itself into the baseline.
         if score >= self.config.absorb_surprise:
             return
-        self._seen[view].add(edge)
         self._principals[view].add(edge[0])
         self._edges[view][edge] = self._edges[view].get(edge, 0.0) + 1.0
         for store, k in ((self._dst_counts, edge[1]), (self._src_counts, edge[0]),

@@ -44,7 +44,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-SERIALIZATION_VERSION = "3.0.0"
+SERIALIZATION_VERSION = "4.0.0"
 _SIGNING_KEY_ENV = "UEBA__SECURITY__MODEL_SIGNING_KEY"
 
 _STATE_NAME = "engine.json"
@@ -114,7 +114,6 @@ def graph_to_state(graph) -> dict:
             "absorb_surprise": cfg.absorb_surprise,
         },
         "edges": edges,
-        "seen": {view: [_edge_key(e) for e in edges] for view, edges in graph._seen.items()},
         "principals": {view: sorted(v) for view, v in graph._principals.items()},
         "dst_counts": graph._dst_counts,
         "src_counts": graph._src_counts,
@@ -138,8 +137,6 @@ def graph_from_state(state: dict):
         target = graph._edges[view]
         for key, count in view_edges.items():
             target[_edge_from_key(key)] = float(count)
-    for view, keys in state["seen"].items():
-        graph._seen[view] = {_edge_from_key(k) for k in keys}
     for view, principals in state["principals"].items():
         graph._principals[view] = set(principals)
     graph._dst_counts = {v: dict(m) for v, m in state["dst_counts"].items()}

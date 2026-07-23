@@ -263,7 +263,10 @@ class BehavioralEngine:
             for view, edge in self.graph.edges_for(e):
                 st = novelty.setdefault(view, [0, 0])
                 st[0] += 1
-                if edge not in self.graph._seen[view]:
+                # An edge is "seen" iff it is already in the baseline counters;
+                # _edges keys ARE the seen-set (both are written together in
+                # _absorb), so no separate seen-set is kept.
+                if edge not in self.graph._edges[view]:
                     st[1] += 1
             for view, s in self.graph.score_event_views(e, absorb=False):
                 by_view.setdefault(view, []).append(s)

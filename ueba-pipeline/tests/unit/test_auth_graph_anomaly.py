@@ -90,9 +90,9 @@ def test_attack_edge_is_not_absorbed():
 
 def test_scoring_without_absorb_leaves_state_unchanged():
     det = _fitted()
-    seen_before = {v: set(s) for v, s in det._seen.items()}
+    edges_before = {v: dict(e) for v, e in det._edges.items()}
     det.score_event(_logon("alice", "10.9.9.9", "dc01", minute=1300), absorb=False)
-    assert {v: set(s) for v, s in det._seen.items()} == seen_before
+    assert {v: dict(e) for v, e in det._edges.items()} == edges_before
 
 
 def test_missing_time_yields_zero():
