@@ -13,21 +13,34 @@ log files / Kafka
   features/manifest.py ......... which feature groups this estate can support
   features/aggregate.py ........ per (entity, hour) behavioural count vectors
       |
-      v
-  graph/auth_graph_anomaly.py .. edge surprise per view (Dirichlet, nats)
-      |
-      v
-  models/pvalue.py ............. ONE frozen null PER VIEW -> calibrated p-value
-      |
-      v
-  models/fisher.py
-        Tippett  across the views an event fires
-        Šidák    over the windows an entity was tested in
-        budget / BH  across entities
-      |
-      v
-  ranked entity alerts
+      +-------------------------------+--------------------------------+
+      |                               |                                |
+      v                               v                                v
+  RELATIONAL PATH               NHI QUEUE                       INSIDER QUEUE
+  graph/auth_graph_anomaly.py   identity/deviation.py           identity/deviation.py
+  edge surprise per view        hour-of-day surprise            models/counts.py
+  (Dirichlet, nats)            (Dirichlet, circular)            (Gamma-Poisson tail)
+      |                               |                                |
+      v                               v                                v
+  models/pvalue.py              own frozen null                  own frozen null
+  ONE null PER VIEW
+      |                               |                                |
+      v                               v                                v
+  models/fisher.py              Šidák over windows               Šidák over windows
+    Tippett across views              |                                |
+    Šidák over windows                v                                v
+    budget / BH across entities  own budget                       own budget
+      |                               |                                |
+      v                               v                                v
+  ranked entity alerts          NHI alerts                      insider alerts
 ```
+
+**Three queues, never merged.** The two deviation queues cover threat classes the
+relational path cannot see -- neither creates a new relationship -- and they are
+kept out of its Tippett minimum and its budget because fusing them was measured to
+displace relational evidence (four times now; see
+[identities.md](identities.md) §15). They ride in the same signed bundle so one
+`train` produces one artifact; sharing a file is not fusing a score.
 
 ## Everything is a p-value
 
@@ -155,6 +168,19 @@ change needs to be reliably distinguished from routine group management.
 Computed with NetworkX on a rolling snapshot rather than per event, so it only
 has to finish inside the retrain window: at this scale (a few hundred to a few
 thousand nodes) the full five-metric pass completes in well under a second.
+
+## The deviation queues are windowed, not streaming
+
+`score_stream` covers the relational path only. The deviation queues are scored by
+`score_queues`, in batch, and that is a property of what they measure rather than
+an omission: a **rate** is not observable until its window closes, so emitting
+mid-window would either score a partial count as if it were a whole one or require
+retracting an alert already sent. The hour signal alone could stream per event;
+the volume signal cannot, and splitting the queue's emission model by signal would
+give an analyst two different alerting contracts for one queue.
+
+A watermark-based emitter -- release each (entity, hour) cell once the stream's
+clock passes its end -- is the clean way to close this, and is not implemented.
 
 ## Extension paths (not implemented)
 

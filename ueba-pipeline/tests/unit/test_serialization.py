@@ -82,6 +82,39 @@ def test_save_load_scores_are_bit_identical(tmp_path):
     assert np.allclose([p for _, p in p_before], [p for _, p in p_after], atol=0.0, rtol=0.0)
 
 
+def test_deviation_queues_survive_the_round_trip_exactly(tmp_path):
+    """The behavioural-deviation queues must persist with the engine.
+
+    They ride in the same signed bundle so one `train` produces one artifact; if
+    they did not survive it, a deployment would silently lose the only coverage
+    of the two threat classes the relational path cannot see.
+    """
+    engine = _train_engine()
+    test_events = _synthetic_estate()
+
+    before = engine.score_queues(test_events)
+    engine.save(str(tmp_path / "bundle"))
+    reloaded = BehavioralEngine.load(str(tmp_path / "bundle"))
+    after = reloaded.score_queues(test_events)
+
+    assert sorted(before) == sorted(after) != []
+    for queue in before:
+        shape = lambda alerts: [(a.entity, a.p_value, a.surprise, a.signal, a.alerted)
+                                for a in alerts]
+        assert shape(before[queue]) == shape(after[queue])
+    assert reloaded.nhi_track.covered == engine.nhi_track.covered
+
+
+def test_track_null_arrays_are_deterministically_named(tmp_path):
+    """Array names must not depend on object identity, or the same engine would
+    serialise to different bytes each run and the signature would not be diffable."""
+    _train_engine().save(str(tmp_path / "a"))
+    _train_engine().save(str(tmp_path / "b"))
+    names = lambda p: sorted(f.name for f in (tmp_path / p).glob("*.npy"))
+    assert names("a") == names("b")
+    assert any(n.startswith("track_") for n in names("a"))
+
+
 def test_bundle_contains_no_pickle(tmp_path):
     """The format's whole point: nothing on disk is a pickle."""
     engine = _train_engine()

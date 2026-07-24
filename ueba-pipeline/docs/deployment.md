@@ -9,6 +9,7 @@ not.
 |---|---|
 | the CLI (`train`, `score`, `score-stream`, `drift-check`, evaluation commands) | run end to end |
 | file ingestion | run end to end |
+| the deviation queues in the signed bundle | round-trip verified exact; `train` fits them, `score` emits them as separate queues |
 | Kafka consumer (`ingestion/source.py`) | implemented; exercised against a mock in the unit suite |
 | `docker/Dockerfile`, both compose files, `deploy/k8s/` | schema-valid, **never executed** — no Docker daemon in the authoring environment |
 
@@ -126,12 +127,25 @@ seven detections against the default 0.30 — and should be selected on a
 validation estate held apart from whatever estate performance is reported on.
 See [evaluation.md](evaluation.md).
 
-## Operating the alert queue
+## Operating the alert queues
 
-There is one knob: `alert_budget_per_day`, the number of most-significant
-entities surfaced per day. It is an analyst-capacity decision, not a detection
-threshold — the p-values provide the ranking, and the budget decides how deep
-into that ranking the queue goes.
+Three queues, each with its own budget, because each covers a different threat
+class with a different base rate:
+
+| queue | knob | default | covers |
+|---|---|---|---|
+| relational | `alert_budget_per_day` | 5 | credential theft, lateral movement |
+| NHI schedule | `nhi_budget_per_day` | 0.5 | compromised service accounts |
+| insider rate | `insider_budget_per_day` | 0.5 | insider / credential abuse |
+
+Each is an analyst-capacity decision, not a detection threshold — the p-values
+provide the ranking, and the budget decides how deep into that ranking each queue
+goes. Set a budget to 0 to silence that queue.
+
+**Do not merge them into one budget.** That was measured: a broad signal
+(volume, which covers every identity) floods a shared queue and displaces a narrow
+one (schedule, which covers only the handful with a schedule), taking NHI recall
+from 81.8% to 5.6%. See [identities.md](identities.md) §15.
 
 `alert_mode="fdr"` (Benjamini-Hochberg) is implemented but alerts on nothing at
 realistic evidence volumes; [detection.md](detection.md) explains why this is a

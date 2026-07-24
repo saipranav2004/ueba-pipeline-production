@@ -189,6 +189,13 @@ class EngineConfig:
     # contains no benign-novelty mass and the detector over-flags every first
     # contact in production.
     null_calibration_fraction: float = 0.30
+    # Budgets for the two behavioural-deviation queues. They are SEPARATE numbers
+    # from alert_budget_per_day on purpose: each queue covers a different threat
+    # class with a different base rate, and merging them into one budget was
+    # measured to let the broad signal displace the narrow one (see
+    # identity/deviation.py). Set either to 0 to silence that queue.
+    nhi_budget_per_day: float = 0.5
+    insider_budget_per_day: float = 0.5
 
 
 @dataclass
@@ -201,6 +208,12 @@ class BehavioralEngine:
     _graph_nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
     # Per-view benign novelty rate measured at fit; see _fit_graph.
     view_stats: Dict[str, dict] = field(default_factory=dict)
+    # Behavioural-deviation queues. They ride in the same bundle so one `train`
+    # produces one signed artifact, but they are scored on their own path
+    # (score_queues) and never enter the relational Tippett combination or
+    # alert budget above -- sharing a file is not fusing a score.
+    nhi_track: object = None
+    insider_track: object = None
 
     # -- training ----------------------------------------------------------
     def fit(self, events: List, config_capability=None, contaminated: Optional[set] = None) -> "BehavioralEngine":
@@ -217,7 +230,24 @@ class BehavioralEngine:
         """
         self.manifest = build_capability_manifest(events, config_capability)
         self._fit_graph(_time_sorted_graph_events(events), contaminated)
+        self._fit_tracks(events)
         return self
+
+    def _fit_tracks(self, events: List) -> None:
+        """Fit the behavioural-deviation queues on the same training events.
+
+        These cover the two threat classes the relational path is blind to by
+        construction -- a compromised non-human identity (wrong time) and insider
+        rate abuse (wrong volume), neither of which creates a new relationship.
+        They read the full event stream, not just ``GRAPH_EVENT_TYPES``, because
+        an identity's schedule and rate are properties of everything it does.
+        """
+        from ueba_pipeline.identity.deviation import (
+            insider_volume_queue, nhi_schedule_queue,
+        )
+
+        self.nhi_track = nhi_schedule_queue().fit(events)
+        self.insider_track = insider_volume_queue().fit(events)
 
     def _fit_graph(self, graph_events: List, contaminated: Optional[set] = None) -> None:
         """Build the graph baseline and freeze one benign null per view.
@@ -309,6 +339,25 @@ class BehavioralEngine:
         hours = [d.hour for d in detections] or [h for _, h in observed]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
         return detections, self._rollup(detections, observed, observed_days=max(days, 1.0))
+
+    def score_queues(self, events: List) -> Dict[str, list]:
+        """Score the behavioural-deviation queues. SEPARATE from ``score``.
+
+        Returns ``{"nhi": [...], "insider": [...]}``, each a ranked list with its
+        own budget applied. Deliberately a different method with a different
+        return type from :meth:`score`: these alerts are a different queue an
+        analyst triages separately, and keeping them out of the relational ranking
+        is the property that stops a broad signal displacing a narrow one. Pure --
+        it does not mutate any track.
+        """
+        out: Dict[str, list] = {}
+        for name, budget in (("nhi", self.config.nhi_budget_per_day),
+                             ("insider", self.config.insider_budget_per_day)):
+            track = getattr(self, f"{name}_track", None)
+            if track is None or budget <= 0:
+                continue
+            out[name] = track.score(events, budget_per_day=budget)
+        return out
 
     def observe(self, events: List) -> "BehavioralEngine":
         """Explicitly fold events into the baseline (online adaptation).

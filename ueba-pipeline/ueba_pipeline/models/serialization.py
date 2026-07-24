@@ -44,7 +44,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-SERIALIZATION_VERSION = "4.0.0"
+SERIALIZATION_VERSION = "5.0.0"
 _SIGNING_KEY_ENV = "UEBA__SECURITY__MODEL_SIGNING_KEY"
 
 _STATE_NAME = "engine.json"
@@ -147,6 +147,95 @@ def graph_from_state(state: dict):
     return graph
 
 
+# ── behavioural deviation tracks ────────────────────────────────────────────
+# Same discipline as every other section: plain numbers and strings under an
+# explicit schema, arrays out to .npy, nothing that could name a class to build.
+# JSON object keys are always strings, so the hour/day-of-week keys are written as
+# strings and parsed back to ints on load rather than being trusted as-is.
+def _int_keyed(d: dict) -> dict:
+    return {int(k): float(v) for k, v in d.items()}
+
+
+def track_to_state(track, name: str) -> Tuple[dict, Dict[str, np.ndarray]]:
+    """The persistable content of one BehaviouralDeviationTrack.
+
+    ``name`` keys the null arrays deterministically (``track_<name>_<signal>``), so
+    the same engine always serialises to the same bytes -- which keeps the bundle
+    signature reproducible and diffable.
+    """
+    arrays: Dict[str, np.ndarray] = {}
+    nulls = {}
+    for signal, pv in track._nulls.items():
+        st = pvalue_to_state(pv)
+        grid = st.pop("_array")
+        key = f"track_{name}_{signal}"
+        if grid is not None:
+            arrays[key] = np.asarray(grid, dtype=np.float64)
+        nulls[signal] = {**st, "array_key": key if grid is not None else None}
+    state = {
+        "config": {
+            "alpha": float(track.alpha),
+            "null_calibration_fraction": float(track.null_calibration_fraction),
+            "enabled_signals": sorted(track.enabled_signals),
+            "min_schedule_share": float(track.min_schedule_share),
+            "min_baseline_events": int(track.min_baseline_events),
+        },
+        "covered": sorted(track.covered),
+        "hour_counts": {e: {str(h): c for h, c in m.items()}
+                        for e, m in track._hour_counts.items()},
+        "dow_counts": {e: {str(d): c for d, c in m.items()}
+                       for e, m in track._dow_counts.items()},
+        "entity_totals": track._entity_totals,
+        "hour_marginal": {str(h): c for h, c in track._hour_marginal.items()},
+        "dow_marginal": {str(d): c for d, c in track._dow_marginal.items()},
+        "total": float(track._total),
+        "counts": {
+            "prior_shape": float(track._counts.prior_shape),
+            "prior_rate": float(track._counts.prior_rate),
+            "min_periods": int(track._counts.min_periods),
+            "total": track._counts._total,
+            "periods": track._counts._periods,
+        },
+        "nulls": nulls,
+    }
+    return state, arrays
+
+
+def track_from_state(state: dict, arrays: Dict[str, np.ndarray]):
+    from ueba_pipeline.identity.deviation import BehaviouralDeviationTrack
+    from ueba_pipeline.models.counts import GammaPoissonCounts
+
+    cfg = state["config"]
+    track = BehaviouralDeviationTrack(
+        alpha=float(cfg["alpha"]),
+        null_calibration_fraction=float(cfg["null_calibration_fraction"]),
+        enabled_signals=frozenset(cfg["enabled_signals"]),
+        min_schedule_share=float(cfg["min_schedule_share"]),
+        min_baseline_events=int(cfg["min_baseline_events"]),
+    )
+    track.covered = set(state["covered"])
+    track._hour_counts = {e: _int_keyed(m) for e, m in state["hour_counts"].items()}
+    track._dow_counts = {e: _int_keyed(m) for e, m in state["dow_counts"].items()}
+    track._entity_totals = {k: float(v) for k, v in state["entity_totals"].items()}
+    track._hour_marginal = _int_keyed(state["hour_marginal"])
+    track._dow_marginal = _int_keyed(state["dow_marginal"])
+    track._total = float(state["total"])
+
+    c = state["counts"]
+    counts = GammaPoissonCounts(prior_shape=float(c["prior_shape"]),
+                                prior_rate=float(c["prior_rate"]),
+                                min_periods=int(c["min_periods"]))
+    counts._total = {k: float(v) for k, v in c["total"].items()}
+    counts._periods = {k: float(v) for k, v in c["periods"].items()}
+    track._counts = counts
+
+    track._nulls = {
+        signal: pvalue_from_state({**st, "_array": arrays.get(st.get("array_key") or "")})
+        for signal, st in state["nulls"].items()
+    }
+    return track
+
+
 # ── capability manifest ─────────────────────────────────────────────────────
 def manifest_to_state(manifest) -> dict:
     if manifest is None:
@@ -173,6 +262,18 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
             arrays[f"gnull_{view}"] = np.asarray(pv._grid, dtype=np.float64)
         graph_nulls[view] = {**st, "has_array": f"gnull_{view}" in arrays}
 
+    # The deviation queues travel in the same bundle so one `train` produces one
+    # signed artifact. They stay separate OBJECTS with their own scoring path --
+    # sharing a file is not fusing a score.
+    tracks = {}
+    for name in ("nhi", "insider"):
+        track = getattr(engine, f"{name}_track", None)
+        if track is None:
+            continue
+        st, track_arrays = track_to_state(track, name)
+        arrays.update(track_arrays)
+        tracks[name] = st
+
     cfg = engine.config
     state = {
         "serialization_version": SERIALIZATION_VERSION,
@@ -182,11 +283,14 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
             "alert_fdr": cfg.alert_fdr,
             "alert_budget_per_day": cfg.alert_budget_per_day,
             "null_calibration_fraction": cfg.null_calibration_fraction,
+            "nhi_budget_per_day": cfg.nhi_budget_per_day,
+            "insider_budget_per_day": cfg.insider_budget_per_day,
         },
         "graph": graph_to_state(engine.graph),
         "graph_nulls": graph_nulls,
         "manifest": manifest_to_state(engine.manifest),
         "view_stats": engine.view_stats,
+        "tracks": tracks,
     }
     return state, arrays
 
@@ -211,6 +315,10 @@ def engine_from_bundle(state: dict, arrays: Dict[str, np.ndarray]):
         arr = arrays.get(f"gnull_{view}") if st.get("has_array") else None
         graph_nulls[view] = pvalue_from_state({**st, "_array": arr})
     engine._graph_nulls = graph_nulls
+
+    for name, st in state.get("tracks", {}).items():
+        if name in ("nhi", "insider"):
+            setattr(engine, f"{name}_track", track_from_state(st, arrays))
     return engine
 
 

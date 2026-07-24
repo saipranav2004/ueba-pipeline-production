@@ -61,6 +61,9 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"  {'view':14s} {'edges':>8s} {'benign novelty':>15s}", file=sys.stderr)
     for view, st in engine.view_stats.items():
         print(f"  {view:14s} {st['edges']:>8d} {st['novel_rate']:>14.1%}", file=sys.stderr)
+    if engine.nhi_track is not None:
+        print(f"  deviation queues: {len(engine.nhi_track.covered)} scheduled "
+              f"identities admitted to the NHI queue", file=sys.stderr)
 
 
 def cmd_score(args: argparse.Namespace) -> None:
@@ -80,6 +83,19 @@ def cmd_score(args: argparse.Namespace) -> None:
         top = r.top_hour.isoformat() if r.top_hour else "-"
         print(f"  {r.p_value:10.3e}  {r.entity:28s}  "
               f"hits={r.graph_hits:<4d} windows={r.n_windows:<4d} {top}")
+
+    # The behavioural-deviation queues are printed as SEPARATE queues, never
+    # merged into the ranking above: they cover threat classes the relational
+    # path cannot see, and merging them was measured to displace its evidence.
+    for name, queue in engine.score_queues(events).items():
+        fired = [a for a in queue if a.alerted]
+        if not fired:
+            continue
+        print(f"\n  == {name} queue ({len(fired)} alert(s), separate budget) ==")
+        for a in fired:
+            top = a.top_hour.isoformat() if a.top_hour else "-"
+            print(f"  {a.p_value:10.3e}  {a.entity:28s}  "
+                  f"signal={a.signal:<7s} windows={a.n_windows:<4d} {top}")
 
 
 def cmd_score_stream(args: argparse.Namespace) -> None:
