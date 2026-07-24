@@ -16,21 +16,30 @@ from pathlib import Path
 # by bare name (``from attacks import ...``), so its root must be on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "enterprise_simulator"))
 
-from attacks import ATTACK_REGISTRY, HEADLINE_ATTACKS, INSIDER_CORPUS_ATTACKS
+from attacks import (
+    ATTACK_REGISTRY, HEADLINE_ATTACKS, INSIDER_CORPUS_ATTACKS,
+    NHI_CORPUS_ATTACKS, NON_HEADLINE_ATTACKS,
+)
 
 
-def test_headline_and_corpus_partition_the_registry():
-    """Every registered attack is in exactly one of headline / insider corpus."""
-    headline, corpus = set(HEADLINE_ATTACKS), set(INSIDER_CORPUS_ATTACKS)
-    assert headline.isdisjoint(corpus)
-    assert headline | corpus == set(ATTACK_REGISTRY)
+def test_headline_and_corpora_partition_the_registry():
+    """Every registered attack is in exactly one of headline / separate corpora."""
+    headline, corpora = set(HEADLINE_ATTACKS), set(NON_HEADLINE_ATTACKS)
+    assert headline.isdisjoint(corpora)
+    assert headline | corpora == set(ATTACK_REGISTRY)
 
 
-def test_insider_corpus_is_excluded_from_headline():
-    """The insider corpus is measured separately, never inside the headline total."""
-    assert "insider_data_staging" in ATTACK_REGISTRY          # still injectable via `all`
-    assert "insider_data_staging" in INSIDER_CORPUS_ATTACKS
-    assert "insider_data_staging" not in HEADLINE_ATTACKS
+def test_separately_measured_corpora_are_excluded_from_headline():
+    """Each corpus is measured on its own, never inside the headline total.
+
+    Both are invisible to a purely relational detector by construction, so scoring
+    them in the headline would understate a figure measuring a different capability.
+    """
+    for attack, corpus in (("insider_data_staging", INSIDER_CORPUS_ATTACKS),
+                           ("nhi_schedule_hijack", NHI_CORPUS_ATTACKS)):
+        assert attack in ATTACK_REGISTRY        # still injectable via `all`
+        assert attack in corpus
+        assert attack not in HEADLINE_ATTACKS
 
 
 def test_headline_covers_the_ten_documented_techniques():

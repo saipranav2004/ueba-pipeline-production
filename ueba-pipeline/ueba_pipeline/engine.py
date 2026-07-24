@@ -9,7 +9,7 @@ and directory-object change -- per event, as
 Dirichlet-smoothed edge surprise across several independently calibrated
 relationship views.
 
-Measured on the honest all-technique benchmark: 53/60 = 88.3% recall at 3.31
+Measured on the honest all-technique benchmark: 52/60 = 86.7% recall at 3.27
 false-positive entities/day (6 seeds, contamination=none). Reproduce with
 `walk-forward-eval`; see docs/evaluation.md.
 

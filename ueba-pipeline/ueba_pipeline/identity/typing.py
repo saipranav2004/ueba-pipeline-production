@@ -78,13 +78,19 @@ DEFAULT_MIN_ACTIVE_HOURS = 6
 # daytime band — correctly typed human.
 #   weekend:  humans <=0.22, service accounts >=0.19 (overlapping tails) -> 0.15
 #   tod low:  humans >=0.54, round-the-clock agents <=0.24               -> 0.50
-#   tod high: razor-tight jobs sit at R>=0.995; the tightest humans reach ~0.997
-#             too, so this clause is weekend-gated and periodicity-confirmed, and
-#             both together admit no human across six seeds                -> 0.995
+#   tod high: razor-tight jobs sit at R>=0.995; a few humans reach that too, so
+#             this clause is weekend-gated, and the pair admits no human across
+#             six seeds on both full and training slices                   -> 0.995
+#
+# Periodicity is deliberately NOT a gate. Measured on training slices across three
+# seeds, the g-test p distributions of the two populations are nearly identical
+# (service median 1.0e-3, human median 3.0e-3) -- it does not discriminate -- and
+# requiring it cost coverage badly on shorter windows, where fewer cycles weaken
+# every g-test and half the service accounts fell below any useful gate. It is
+# retained on the profile as reported evidence, not as a decision input.
 AUTOMATED_WEEKEND_RATIO = 0.15       # sustained weekend activity is machine-like
 HUMAN_TOD_LOW = 0.50                 # below this = round-the-clock, not a daytime band
 RAZOR_TIGHT_TOD = 0.995              # at/above this = one clock window, no human daytime
-CONFIRM_PERIODICITY_P = 1e-4         # a razor-tight R only counts if periodicity agrees
 
 
 @dataclass(frozen=True)
@@ -189,20 +195,18 @@ def classify_identity(
     # band). Catches monitoring agents, whose activity is neither periodic nor
     # concentrated — only the round-the-week, round-the-clock shape marks them.
     round_clock = weekendy and tod <= HUMAN_TOD_LOW
-    # Razor-tight: fires on weekends in one clock window that periodicity confirms
-    # is a real schedule (not one busy day inflating the resultant length). The
-    # tightest humans reach R~0.997 too, so this is weekend-gated: a weekday-only
-    # human with a tight schedule stays human. (A weekday-only *automated* identity
-    # is the acknowledged gap — see docs/identities.md.)
-    razor_tight = (weekendy and tod >= RAZOR_TIGHT_TOD
-                   and g.p_value <= CONFIRM_PERIODICITY_P)
+    # Razor-tight: fires on weekends in one clock window. A few humans reach
+    # R>=0.995 too, so this is weekend-gated: a weekday-only human with a tight
+    # schedule stays human. (A weekday-only *automated* identity is the
+    # acknowledged gap — see docs/identities.md.)
+    razor_tight = weekendy and tod >= RAZOR_TIGHT_TOD
     if round_clock or razor_tight:
         why = []
         if round_clock:
             why.append(f"round-the-clock ({weekend:.0%} weekend, R={tod:.2f})")
         if razor_tight:
-            why.append(f"scheduled: one clock window (R={tod:.3f}) "
-                       f"+ periodic (g-test p={g.p_value:.1e})")
+            why.append(f"scheduled: one clock window (R={tod:.3f}, "
+                       f"{weekend:.0%} weekend)")
         kind, reason = "automated", "; ".join(why)
     else:
         kind = "human"

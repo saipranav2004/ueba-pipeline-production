@@ -36,11 +36,16 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **53/60 = 88.3%** | **3.31** |
+| **engine** | **52/60 = 86.7%** | **3.27** |
 
 Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
 Pass-the-Hash `8/9`, AS-REP roasting `6/6`, password spray `6/6`, golden ticket
-`4/4`, LSASS dump `4/4`, account manipulation `1/5`, NTDS dump `0/2`.
+`4/4`, LSASS dump `4/4`, account manipulation `0/5`, NTDS dump `0/2`.
+
+A second, **separately budgeted** track covers compromised non-human identities —
+a class this relational engine detects `0/18` of, because a hijacked service
+account creates no new relationship. It reaches `9/11 = 81.8%` on the identities
+it covers at 0.31 FP/day; see [docs/identities.md](docs/identities.md).
 
 **These are simulator numbers.** Read [docs/evaluation.md](docs/evaluation.md)
 before quoting them: the estate is self-generated, and no detection-performance
@@ -55,7 +60,8 @@ export UEBA__SECURITY__MODEL_SIGNING_KEY=$(python -c "import secrets;print(secre
 
 # 1. Generate an estate with injected attacks. `headline` = the ten
 #    credential/lateral-movement techniques the recall figure is measured over;
-#    `all` also injects the separately-measured insider corpus (see docs/evaluation.md).
+#    `all` also injects the separately-measured insider and NHI corpora
+#    (see docs/evaluation.md).
 python enterprise_simulator/run_simulation.py --days 20 --seed 20250106 \
     --inject-attacks headline --attack-count 30 --attack-placement spread
 
@@ -82,6 +88,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | `score-stream` | score online, adapting the baseline as events arrive |
 | `drift-check` | compare a live window's log-source capabilities against the bundle |
 | `classify-identities` | type each identity as automated (NHI) or human from activity timing |
+| `nhi-scan` | rank scheduled identities by deviation from their own schedule (own budget) |
 | `walk-forward-eval` | causal out-of-time evaluation: per-technique recall, FP/day |
 | `comiset-eval` | real-data eval on a COMISET archive: per-view benign novelty + per-auth ROC |
 | `model-benchmark` | compare classical models under four leakage-resistant protocols |
@@ -96,7 +103,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | the statistical design and how each attack is caught | [docs/detection.md](docs/detection.md) |
 | the feature contract and causality guarantees | [docs/features.md](docs/features.md) |
 | how the authentication graph is built and scored | [docs/graph.md](docs/graph.md) |
-| how identities are typed automated (NHI) vs human | [docs/identities.md](docs/identities.md) |
+| NHI: typing identities, and the schedule-deviation track | [docs/identities.md](docs/identities.md) |
 | evaluation methodology, results, and limitations | [docs/evaluation.md](docs/evaluation.md) |
 | classical models compared under disjoint splits | [docs/model_comparison.md](docs/model_comparison.md) |
 | public datasets and real-data validation | [docs/datasets.md](docs/datasets.md) |
@@ -115,6 +122,7 @@ ueba_pipeline/
   graph/sessions.py             4624 logons -> causal host->account resolution
   graph/identity_graph.py       structural graph (Tier-0, blast radius) — analyst tooling
   identity/typing.py            type an identity automated (NHI) vs human by activity timing
+  identity/nhi_detector.py      NHI schedule-deviation track (separate queue + budget)
   models/periodicity.py         Fisher's exact g-test for periodic activity
   models/pvalue.py              frozen empirical null -> calibrated p-value
   models/fisher.py              Tippett / Šidák / Benjamini-Hochberg
@@ -126,7 +134,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     130 tests
+tests/unit/                     137 tests
 ```
 
 ## Model persistence
@@ -148,12 +156,15 @@ comparison harness, and real-telemetry ingestion validation.
 - **No real-world detection-performance validation.** Every recall and
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
-- **Account manipulation (1/5) and NTDS dump (0/2)** are evidence limits on this
+- **Account manipulation (0/5) and NTDS dump (0/2)** are evidence limits on this
   estate, not tuning failures — both live in views too sparse to assert
   significance from.
 - **Volume abuse over an established relationship is not detected** (1/9 on an
   insider data-staging corpus). Relational novelty is the wrong instrument for a
   threat that creates no new relationship; see [docs/evaluation.md](docs/evaluation.md).
+- **Round-the-clock non-human identities are out of the NHI track's scope** — a
+  poller active in every hour has no schedule to deviate from, so a compromise of
+  one needs a volume or relationship instrument, not a temporal one.
 - **Scale above ~300 entities is unmeasured.** O(1) counter updates predict it
   holds; that is a prediction.
 - **No multi-tenancy, RBAC, or API.** The product is a CLI.

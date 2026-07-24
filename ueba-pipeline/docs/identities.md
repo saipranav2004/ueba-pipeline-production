@@ -187,20 +187,147 @@ this document.
 
 ---
 
-## 7. Where this goes next
+---
 
-Typing is the substrate; the capability it unlocks is **NHI-specific detection**.
-A service account has a tight, low-entropy baseline, so a compromise that keeps it
-on its established relationships — a hijacked schedule, activity at a new time, a
-silent agent — leaves no *novel relationship* for the graph detector to score
-(the same blind spot documented for insider volume abuse in
-[evaluation.md](evaluation.md)). A periodicity-deviation detector over typed NHIs
-would catch that class. The disciplined way to add it, given that any signal fused
-into the shared alert budget tends to lower headline recall (proven repeatedly in
-[evaluation.md](evaluation.md)), is a **separate, separately-calibrated track for
-automated identities** — not a sixth view in the main budget. That is the next
-iteration, and it needs a simulator attack that hijacks an NHI's schedule to be
-measured against, which does not exist yet.
+# Part 2 — The NHI temporal track (detection)
+
+`ueba_pipeline/identity/nhi_detector.py`. CLI: `nhi-scan`. This is the capability
+typing unlocks, and unlike typing it *is* a detector — with its **own ranked queue
+and its own budget**, deliberately never merged into the relational detector's
+Tippett minimum or its alert budget.
+
+## 8. The gap, and why the shipped engine cannot close it
+
+A stolen service-account credential used within that account's own access creates
+**no new relationship**: its own server, its own service, its own ticket
+encryption. Every relationship view scores it as routine, correctly. The only
+thing wrong is *when* — a backup job that has only ever run at 02:30 working at
+15:00.
+
+This is measured, not asserted. On an estate carrying the `nhi_schedule_hijack`
+corpus (below), the shipped relational engine detects **0/3** held-out instances.
+That is the honest baseline this track is built against.
+
+## 9. What it covers, decided by measurement
+
+Deviation from a schedule only means something for an identity that *has* one, so
+coverage is a measured property, not a name or a label. An identity is admitted
+only if its busiest three hour-buckets carry **≥95%** of its baseline activity and
+it has **≥50** baseline events. Measured on training slices across three seeds:
+
+| cohort | top-3-hour share of activity |
+|---|---|
+| scheduled service accounts | **1.000** (all 27) |
+| round-the-clock agents | ≤0.452 |
+| humans (with enough history) | ≤0.920 |
+
+Both exclusions are deliberate:
+
+- **Round-the-clock agents** (a poller firing every hour) have no schedule to
+  deviate from at this resolution. Including them was measured to be actively
+  harmful: their benign activity constantly lands in hours they have not used, which
+  inflated the shared null (p99 benign surprise 11.45) and buried the genuine
+  deviation of a scheduled job. Excluding them leaves the cohort homogeneous, which
+  is what makes a single null valid.
+- **People** do not pass; a work-hour band is not a schedule. The few humans who
+  look concentrated are low-activity admin accounts, which the ≥50-event floor
+  removes — with thirty events you cannot establish that an identity has a schedule.
+
+This is the same admission discipline the relationship views are held to
+([evaluation.md](evaluation.md)): a signal whose benign behaviour is routinely
+"novel" cannot separate an attack from ordinary variation.
+
+## 10. The model
+
+The same statistical machinery as the relational detector, so the system carries
+one idea rather than two — a Dirichlet-smoothed conditional over the hour an
+identity is active, backing off to the cohort's hour marginal:
+
+```
+surprise = −log P(hour | identity)
+P(h | e) = (c~_eh + α·π~_h) / (n_e + α)
+```
+
+**The hour is a circular variable, and treating it otherwise does not work.** 23:00
+is adjacent to 00:00, and a job scheduled for 02:30 that slips to 03:05 has done
+nothing surprising. Scoring raw per-hour counts made that slip look exactly as
+novel as activity twelve hours away, and it was the dominant error: real schedules
+jitter across bucket boundaries constantly, so nearly every covered identity
+produced a benign "novel hour". So counts are **circularly smoothed** before the
+conditional is formed —
+
+```
+c~(h) = Σ_d exp(−|d|_circ / τ) · c(h + d mod 24),   τ = 1 hour
+```
+
+— the discrete counterpart of a circular (von Mises-style) kernel estimate, the
+standard treatment of a periodic variable. An adjacent hour then borrows most of
+its neighbour's mass; an hour across the clock borrows essentially nothing
+(exp(−12) ≈ 6e-6).
+
+Raw surprise becomes a **calibrated p-value against a benign null frozen on a
+held-out slice** of training, exactly as in the relational track. Only one
+hypothesis is examined per (identity, hour) cell — the hour itself — so there is no
+within-cell multiplicity; across an identity's windows the minimum is Šidák-corrected
+for the number of windows tested.
+
+**Ties are the norm and are broken on surprise.** Every window whose surprise
+exceeds the entire benign null floors at the same `1/(n+1)`, so a plain minimum
+over p picks an arbitrary window — often a benign one — and reports the wrong hour
+to the analyst. Since p is a monotone transform of surprise and the floor is only a
+resolution limit, the tie is resolved on raw surprise.
+
+## 11. Measured performance
+
+Six seeded estates, `nhi_schedule_hijack` corpus, causal 60/40 split, strict
+attribution (an alerted identity must be the attacked principal **and** its peak
+window must fall inside the attack span), this track's own budget of 0.5/day.
+
+| | value |
+|---|---|
+| **shipped relational engine (baseline)** | **0/3 per seed — structurally blind** |
+| **recall on covered identities** | **9/11 = 81.8%** |
+| recall overall (incl. out-of-scope targets) | 9/18 = 50.0% |
+| false-positive identities/day | **0.31** |
+
+Both recall figures are reported because they answer different questions. The
+attack picks any of the twelve service accounts uniformly, including the
+round-the-clock agents this track deliberately does not cover; **7 of 18 instances
+targeted an identity with no schedule to deviate from**, and those are out of
+scope by construction rather than missed. 81.8% is the capability where it applies;
+50% is what the corpus as a whole yields.
+
+Score separation is close to complete, which is why the operating point is
+comfortable: benign surprise reaches at most 1.32 (p99 = 0.86) while the attack's
+5th percentile is 1.48. At a raw threshold of 1.25 the corpus separates at **100%
+TPR for 0.13% FPR**.
+
+## 12. Limitations of this track
+
+1. **Round-the-clock identities are out of scope**, by design and by measurement.
+   Catching a compromise of those needs a different instrument (volume or
+   relationship, not time).
+2. **Hour granularity.** A schedule shift of an hour or two is deliberately not
+   surprising (the circular kernel). An attacker who confines activity to the
+   identity's own window is invisible to this track — the honest boundary of a
+   temporal model.
+3. **Simulator-measured, like everything else here.** The admission thresholds and
+   the operating point come from the estate, and a real estate with daylight-saving
+   shifts, follow-the-sun batch windows or seasonal jobs will move them. Real
+   telemetry must re-measure them before these numbers transfer.
+4. **It does not model the day of the week.** A weekday-only job that runs on a
+   Sunday inside its usual hour is not flagged. Day-of-week is the natural next
+   dimension and was left out rather than added untested.
+
+## 13. Where this goes next
+
+- **Day-of-week and inter-arrival modelling**, on the same Dirichlet/circular
+  machinery, to close limitation 4.
+- **Volume-per-schedule**: an identity that keeps its hours but does ten times its
+  usual work is the remaining NHI blind spot, and it is the same open problem as
+  insider volume abuse ([evaluation.md](evaluation.md)) — worth solving once, in
+  this track, where it has its own budget and cannot displace relational evidence.
+- **Real-data recalibration**, the standing requirement for every figure here.
 
 ## References
 

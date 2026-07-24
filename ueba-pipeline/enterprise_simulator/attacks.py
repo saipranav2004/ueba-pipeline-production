@@ -742,6 +742,96 @@ def inject_insider_data_staging(
     return events, label
 
 
+def inject_nhi_schedule_hijack(
+    roster: List[Employee],
+    bus: EventBus,
+    sim_date: date,
+    rng: random.Random,
+) -> Tuple[InjectedEvents, AttackLabel]:
+    """A compromised service-account credential used outside its schedule.
+
+    The non-human-identity equivalent of insider abuse, and the class the
+    relational engine structurally cannot see. A service account's credential is
+    stolen (Kerberoasting makes service accounts the standard target) and the
+    attacker rides it: the account authenticates to *its own* server and requests
+    tickets for *its own* service, exactly as it always does.
+
+    The only thing wrong is *when*. A backup job that has only ever run in its
+    small hours maintenance window is suddenly active in the middle of the
+    afternoon. Deliberately:
+
+      * no new host, no new SPN, no new relationship of any kind -- so every
+        relationship view scores this as routine and the shipped detector is
+        blind to it by construction, exactly as it is to insider volume abuse;
+      * no RC4 downgrade, no failure burst, no privileged-group change -- there is
+        no signature to key on;
+      * a session-sized volume, not a flood -- so detecting it requires modelling
+        *time*, and a volume detector cannot take the credit.
+
+    That makes it the honest test of whether an NHI temporal baseline adds a
+    capability the estate did not already have. Sources: service accounts are
+    documented as the identities that "operate 24/7 and do not follow patterns
+    like working hours", so a human-shaped behavioural model raises nothing on
+    them; off-hours use of a machine credential is the corresponding signal.
+    """
+    from core.employees import build_service_accounts
+
+    svc = rng.choice(build_service_accounts())
+    server = svc.server_hostname
+    spn, spn_sid = _CIFS_SPNS.get(
+        server, (f"cifs/{server.lower()}.nexovate.local",
+                 "S-1-5-21-1484628597-1684816888-3125425894-1099"))
+
+    # Mid-afternoon: squarely inside the business day and far outside every
+    # maintenance window the service accounts run in (backup 02:30, SQL 04:00,
+    # WSUS 03:00, SCCM 22:00, log rotation 23:30 IST). The attacker works when
+    # people work, which is precisely when this identity never does.
+    start_hour = rng.uniform(13.0, 16.0)
+    start_ts = local_to_utc(_float_hour_to_datetime(sim_date, start_hour))
+    src_ip = svc.server_ip
+
+    events: InjectedEvents = []
+    # Its own logon, from its own server: a relationship it already has.
+    session = bus.open_session(
+        samaccountname=svc.samaccountname, domain="NEXOVATE",
+        logon_type=5, auth_package="Kerberos",
+        src_ip=src_ip, src_port=0,
+        workstation=svc.server_hostname,
+        computer=f"{svc.server_hostname}.nexovate.local",
+        logon_time_utc=start_ts, is_elevated=True,
+    )
+    events.append(("security", start_ts,
+                   gen_4624(session, start_ts, bus, _user_sid(svc.samaccountname))))
+
+    # A session's worth of ordinary work, at the wrong time of day.
+    ts = start_ts
+    n_requests = rng.randint(12, 25)
+    for _ in range(n_requests):
+        ts = ts + timedelta(seconds=rng.uniform(5.0, 45.0))
+        events.append(("security", ts,
+                       gen_4769(svc.samaccountname, spn, spn_sid, src_ip, ts, bus)))
+    bus.close_session(session.target_logon_id)
+
+    label = AttackLabel(
+        attack_type="nhi_schedule_hijack",
+        mitre_technique="T1078.003",   # Valid Accounts: Local/Service Accounts
+        start_time=utc_now_str(start_ts),
+        end_time=utc_now_str(ts),
+        target_users=[svc.samaccountname],
+        source_ip=src_ip,
+        details={
+            "actor": svc.samaccountname,
+            "service_ticket_requests": n_requests,
+            "signature": f"service account {svc.samaccountname} active at "
+                         f"{start_hour:04.1f}h local, outside every window it has "
+                         f"ever run in; {n_requests} service-ticket requests for "
+                         f"{server}, its own server. No new relationship, no "
+                         "downgrade, no failure -- only the time is wrong",
+        },
+    )
+    return events, label
+
+
 ATTACK_REGISTRY = {
     "pass_the_hash": inject_pass_the_hash,
     "kerberoasting": inject_kerberoasting,
@@ -754,21 +844,30 @@ ATTACK_REGISTRY = {
     "ntds_dump": inject_ntds_dump,
     "account_manipulation": inject_account_manipulation,
     "insider_data_staging": inject_insider_data_staging,
+    "nhi_schedule_hijack": inject_nhi_schedule_hijack,
 }
 
-# The insider data-staging corpus (T1005) is a DIFFERENT attack class from the
-# credential-theft / lateral-movement techniques above: it creates no new
-# relationship, only an abnormal *rate* over an existing one, so the relational
-# engine cannot see it and it is measured as its own corpus (docs/evaluation.md,
-# "Open capability: volume abuse over an established relationship"), never folded
-# into the headline recall. It stays in ATTACK_REGISTRY so `--inject-attacks all`
-# can still generate it, but it is excluded from the headline preset below.
+# Two corpora are DIFFERENT attack classes from the credential-theft /
+# lateral-movement techniques above, and each is measured on its own rather than
+# folded into the headline recall:
 #
-# This split exists because `all` silently changed meaning once this corpus was
+#   * insider data staging (T1005) creates no new relationship, only an abnormal
+#     *rate* over an existing one (docs/evaluation.md, "Open capability: volume
+#     abuse over an established relationship");
+#   * NHI schedule hijack (T1078.003) creates no new relationship either, only
+#     activity at a *time* the identity never operates (docs/identities.md).
+#
+# Both are invisible to a purely relational detector by construction, so scoring
+# them inside the headline would understate a figure that measures a different
+# capability. They stay in ATTACK_REGISTRY so `--inject-attacks all` can generate
+# them, and are excluded from the headline preset below.
+#
+# This split exists because `all` silently changed meaning once these corpora were
 # added: the documented headline (53/60 over ten techniques) is reproduced by
-# `--inject-attacks headline`, NOT by `--inject-attacks all` (which now injects
-# eleven techniques and mixes the separately-measured insider corpus into the
-# total). Keeping the headline set named and explicit is what keeps the figure
-# reproducible as the registry grows.
+# `--inject-attacks headline`, NOT by `--inject-attacks all`. Keeping the headline
+# set named and explicit is what keeps the figure reproducible as the registry
+# grows.
 INSIDER_CORPUS_ATTACKS = ("insider_data_staging",)
-HEADLINE_ATTACKS = tuple(k for k in ATTACK_REGISTRY if k not in INSIDER_CORPUS_ATTACKS)
+NHI_CORPUS_ATTACKS = ("nhi_schedule_hijack",)
+NON_HEADLINE_ATTACKS = INSIDER_CORPUS_ATTACKS + NHI_CORPUS_ATTACKS
+HEADLINE_ATTACKS = tuple(k for k in ATTACK_REGISTRY if k not in NON_HEADLINE_ATTACKS)

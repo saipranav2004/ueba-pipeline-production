@@ -156,9 +156,12 @@ is curve-fitting, not calibration.
   on this estate rather than tuning failures; see [evaluation.md](evaluation.md).
 - **Model periodicity in detection.** Service accounts are statistically distinct
   from humans (strong periodicity, low entropy, narrow baselines). They are now
-  *typed* apart from people by behaviour ([identities.md](identities.md)), but the
-  detection path still scores them with the same machinery; an NHI-specific
-  deviation track is the documented next step.
+  *typed* apart from people by behaviour, and a **separate NHI track** now scores
+  scheduled identities against their own temporal baseline
+  ([identities.md](identities.md)) — 81.8% on covered identities against a class
+  this relational path detects 0/18 of. The relational path itself is unchanged and
+  still models NHIs with the same machinery as people; the NHI track runs beside
+  it with its own queue and budget, never inside its Tippett minimum.
 - **Generalise beyond a simulator.** No detection-performance figure is validated
   against real labelled authentication data.
 

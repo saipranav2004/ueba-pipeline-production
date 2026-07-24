@@ -34,7 +34,18 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **53/60 = 88.3%** | **3.31** |
+| **engine** | **52/60 = 86.7%** | **3.27** |
+
+> **Moved from 53/60 at 3.31 by a simulator-realism fix, not a detector change.**
+> Service accounts previously produced no Kerberos service tickets at all, which
+> was both unrealistic (a service account requests a TGS for the resource it
+> drives, exactly as a person does) and misleading: it made *any* service-ticket
+> request by a service account a novel relationship, so a compromised credential
+> doing ordinary work looked anomalous for the wrong reason. Adding routine 4769s
+> to the service-account day changed the `tgs_enc` baseline, and
+> `account_manipulation` went 1/5 → 0/5 — one detection on the weakest technique,
+> already documented below as an evidence limit at n = 5. False positives improved
+> slightly. The detector is byte-identical across this change.
 
 | technique | recall | | technique | recall |
 |---|---|---|---|---|
@@ -42,10 +53,10 @@ techniques. Alert budget 5 entities/day, strict attribution.
 | Kerberoasting | 8/8 | | password spray | 6/6 |
 | silver ticket | 8/8 | | golden ticket | 4/4 |
 | Pass-the-Hash | 8/9 | | LSASS dump | 4/4 |
-| account manipulation | 1/5 | | NTDS dump | 0/2 |
+| account manipulation | 0/5 | | NTDS dump | 0/2 |
 
-The per-technique split varies with attack placement across seeds; the 53/60 total
-is stable and reproduces on an independent six-seed set. The contamination guard
+The per-technique split varies with attack placement across seeds; the total is
+stable to within a detection across estate revisions. The contamination guard
 makes no measurable difference (`oracle` ≡ `none`).
 
 ## Methodology guarantees
@@ -146,7 +157,7 @@ Every component is held to measured contribution.
 
 | component | evidence | verdict |
 |---|---|---|
-| edge surprise | 53/60; carries the product | keep |
+| edge surprise | 52/60; carries the product | keep |
 | per-view null calibration | without it, high-baseline views (`proc_access` ~5.5 nats benign) set the bar for low-baseline views (`user_src` ~0.29) | keep |
 | `tgs_enc` view | Kerberoasting 6/8; 0 without it | keep |
 | MIDAS burst term | cost 10 detections and 0.7 FP/day once it could actually fire | **removed** |
@@ -406,6 +417,40 @@ volume queue with its own budget would let both operate, at the cost of changing
 the product's alerting contract — a decision that should not be made on one
 synthetic corpus.
 
+## Closed capability: compromised non-human identities
+
+The second class the relational detector cannot see, and unlike volume abuse this
+one now has a working detector — in a **separate track with its own budget**,
+which is the architecture this document's own evidence prescribes.
+
+`nhi_schedule_hijack` (T1078.003) was added to measure it: a stolen service-account
+credential driving *its own* server, over *its own* service, with no new
+relationship of any kind, no downgrade and no failure burst — only the hour is
+wrong. The shipped relational engine detects **0/3** of these per seed, exactly as
+its design predicts.
+
+The NHI temporal track (`nhi-scan`, [identities.md](identities.md) Part 2) scores
+each *scheduled* identity's activity hour against its own circularly-smoothed
+baseline:
+
+| | recall | FP identities/day |
+|---|---|---|
+| relational engine | 0/18 | — |
+| **NHI track, covered identities** | **9/11 = 81.8%** | **0.31** |
+| NHI track, whole corpus | 9/18 = 50.0% | 0.31 |
+
+Both figures are reported because 7 of the 18 instances targeted a round-the-clock
+agent, which has no schedule to deviate from and is deliberately out of the
+track's coverage — out of scope by construction, not missed. Benign surprise
+reaches at most 1.32 while the attack's 5th percentile is 1.48, so the two
+separate almost completely (100% TPR at 0.13% FPR on a raw threshold).
+
+**Crucially, the headline is untouched by construction**: this track never enters
+the relational detector's Tippett minimum or its alert budget, so it cannot
+displace relational evidence the way `src_dst`, a volume signal and a
+process-lineage view each did. That is the "separate queues, not better fusion"
+direction, implemented and measured.
+
 ## Parameter sensitivity
 
 `scripts/sweep_hyperparameters.py` moves each free parameter across its plausible
@@ -542,14 +587,13 @@ Windows Security and Sysmon captures.
    may carry a signal an active principal's own baseline does not already drown.
    Success criterion: recall > 0 on real labelled data *without* any
    attack-specific rule.
-3. **NHI-specific *detection*.** Identity *typing* now ships — automated vs human
-   from activity timing, 100% service-account recall at 0% human false positives
-   on the estate ([identities.md](identities.md)). It found that Fisher's g-test
-   does not separate the populations at logon granularity (a weekday work rhythm is
-   itself periodic), so typing keys on weekend activity and time-of-day shape. The
-   remaining step is a periodicity-*deviation* detector over typed NHIs (a hijacked
-   schedule leaves no novel relationship for the graph to score), added as a
-   separate calibrated track, which needs a simulator NHI-schedule-hijack attack to
-   measure against.
+3. **NHI capability — shipped, with the next dimensions open.** Identity typing and
+   the NHI temporal track now both ship ([identities.md](identities.md)): 81.8%
+   recall on covered identities at 0.31 FP/day against a class the relational
+   engine detects 0/18 of. What remains is **day-of-week** modelling (a weekday job
+   running on a Sunday inside its usual hour is not yet flagged) and
+   **volume-per-schedule** (an identity that keeps its hours but does ten times its
+   usual work) — the latter being the same open problem as insider volume abuse,
+   now with an obvious home in a track that has its own budget.
 4. **Scale test** beyond a few hundred identities; adopt count-min sketching if
    exact per-edge counters break memory or latency.

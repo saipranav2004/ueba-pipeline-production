@@ -69,6 +69,16 @@ normal activity stream, each mapped to its MITRE ATT&CK technique:
 | NTDS dump | T1003.003 |
 | Account manipulation | T1098 |
 
+Two further scenarios are **measured separately** from the ten above, because each
+creates no new relationship and so is invisible to a purely relational detector by
+construction. Folding them into the headline would understate a figure that
+measures a different capability:
+
+| Scenario | Technique | Measured by |
+|----------|-----------|-------------|
+| Insider data staging | T1005 | its own corpus — an open capability (volume abuse) |
+| NHI schedule hijack | T1078.003 | the NHI temporal track (`nhi-scan`) |
+
 Each injected attack is written into the same channels a real attack would touch
 and recorded in `attack_labels.jsonl`, so evaluation can measure detection against
 ground truth.
@@ -105,8 +115,8 @@ against a real baseline rather than "the attack is the only such event."
 
 ```bash
 # Evaluation estate: the ten headline techniques, balanced across the timeline.
-# Use `headline` (not `all`) to reproduce the 53/60 figure — `all` also injects
-# the separately-measured insider corpus. See docs/evaluation.md.
+# Use `headline` (not `all`) to reproduce the headline figure — `all` also injects
+# the separately-measured insider and NHI corpora. See docs/evaluation.md.
 python run_simulation.py --days 20 --seed 20250106 \
     --inject-attacks headline --attack-count 30 --attack-placement spread
 
@@ -123,7 +133,7 @@ Options:
 - `--seed N` — random seed for reproducible runs.
 - `--inject-attacks LIST` — comma-separated scenarios, or a preset: `headline`
   (the ten credential/lateral-movement techniques the recall figure is measured
-  over) or `all` (every registered attack, incl. the separate insider corpus).
+  over) or `all` (every registered attack, incl. the separate insider/NHI corpora).
 - `--attack-count N` — number of attack instances to inject.
 - `--attack-placement MODE` — `spread` (balanced, seed-varied coverage of every
   technique across the timeline; use for evaluation), `tail` (all attacks in the

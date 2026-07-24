@@ -951,6 +951,22 @@ def simulate_service_account_day(
                    gen_7036(svc.samaccountname.replace("svc_", "").title(),
                              "running", f"{svc.server_hostname}.{DOMAIN_FQDN}",
                              logon_ts + timedelta(seconds=2), bus))
+        # Kerberos service tickets for the resource this account exists to drive.
+        # A service account that touches a SQL instance, a share or a mailbox
+        # requests a TGS for it exactly as a person would; omitting this left
+        # service accounts with no ticketing history at all, which is both
+        # unrealistic and misleading for evaluation -- it made *any* service-ticket
+        # request by a service account a novel relationship, so a compromised
+        # credential doing ordinary work looked anomalous for the wrong reason.
+        spn, spn_sid = _CIFS_SPNS.get(
+            svc.server_hostname,
+            (f"cifs/{svc.server_hostname}.{DOMAIN_FQDN}",
+             "S-1-5-21-1484628597-1684816888-3125425894-1099"))
+        for _ in range(rng.randint(2, 6)):
+            tgs_ts = logon_ts + timedelta(seconds=rng.randint(3, 240))
+            result.add("security", tgs_ts,
+                       gen_4769(svc.samaccountname, spn, spn_sid,
+                                svc.server_ip, tgs_ts, bus))
         # WMI from service (monitoring agents query system state)
         if rng.random() < 0.5:
             wmi_ts = logon_ts + timedelta(seconds=rng.randint(10, 60))

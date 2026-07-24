@@ -6,6 +6,7 @@ Commands:
   score-stream      load bundle -> score online, adapting the baseline as it goes
   drift-check       compare a live window's capabilities against the trained bundle
   classify-identities  type each identity as automated (NHI) or human from timing
+  nhi-scan          rank scheduled identities by deviation from their own schedule
   walk-forward-eval causal out-of-time evaluation of the engine
   comiset-eval      real-data eval on a COMISET archive (benign novelty + per-auth ROC)
   model-benchmark   compare classical models on the feature matrix (leakage-resistant)
@@ -151,6 +152,41 @@ def cmd_classify_identities(args: argparse.Namespace) -> None:
               f"{p.periodicity_p:>9.1e}  {p.reason}")
 
 
+def cmd_nhi_scan(args: argparse.Namespace) -> None:
+    """Rank scheduled identities by how far off their own schedule they ran.
+
+    A SEPARATE queue with its own budget: this never enters the relational
+    detector's ranking or its alert budget, because a signal folded into that
+    shared minimum was repeatedly measured to displace stronger evidence. It is
+    the track that covers compromised service-account use, which creates no new
+    relationship and is therefore invisible to the relational views.
+    See docs/identities.md.
+    """
+    from ueba_pipeline.identity.nhi_detector import NHITemporalDetector
+
+    events = _read_events(args.data_dir)
+    split_at = int(len(events) * args.train_fraction)
+    train, test = events[:split_at], events[split_at:]
+    if not test:
+        train, test = events, events
+
+    det = NHITemporalDetector().fit(train)
+    alerts = det.score(test, budget_per_day=args.budget_per_day)
+    print(f"[nhi-scan] {len(det.covered)} scheduled identities covered; "
+          f"{sum(1 for a in alerts if a.alerted)} alerted at "
+          f"{args.budget_per_day}/day", file=sys.stderr)
+    if not det.covered:
+        print("[nhi-scan] no identity has a schedule concentrated enough to score "
+              "against; nothing to report", file=sys.stderr)
+        return
+    print(f"{'entity':<24s} {'p':>10s} {'surprise':>9s} {'windows':>8s}  peak hour")
+    for a in alerts:
+        mark = "ALERT " if a.alerted else "      "
+        peak = a.top_hour.isoformat() if a.top_hour else "-"
+        print(f"{mark}{a.entity:<18s} {a.p_value:>10.2e} {a.surprise:>9.2f} "
+              f"{a.n_windows:>8d}  {peak}")
+
+
 def cmd_lanl_eval(args: argparse.Namespace) -> None:
     """Per-authentication ROC on the LANL 2015 auth stream (or a synthetic
     LANL-format fixture). Validates the production graph detector against the
@@ -277,6 +313,17 @@ def main() -> None:
                       help="minimum events before an identity is typed (else 'unknown')")
     p_ci.add_argument("--limit", type=int, default=None, help="print only the top N rows")
     p_ci.set_defaults(func=cmd_classify_identities)
+
+    p_nhi = sub.add_parser("nhi-scan",
+                           help="Rank scheduled identities by deviation from their own "
+                                "schedule (separate track, separate budget)")
+    p_nhi.add_argument("--data-dir", required=True)
+    p_nhi.add_argument("--train-fraction", type=float, default=0.60,
+                       help="earlier fraction of events used to learn schedules")
+    p_nhi.add_argument("--budget-per-day", type=float, default=0.5,
+                       help="this track's OWN alert budget; independent of the "
+                            "relational detector's --alert-budget-per-day")
+    p_nhi.set_defaults(func=cmd_nhi_scan)
 
     p_lanl = sub.add_parser("lanl-eval", help="Per-auth ROC on LANL 2015 (or a LANL-format fixture)")
     p_lanl.add_argument("--auth", required=True, help="path to auth.txt")
