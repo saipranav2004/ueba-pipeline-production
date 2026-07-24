@@ -285,6 +285,7 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
             "null_calibration_fraction": cfg.null_calibration_fraction,
             "nhi_budget_per_day": cfg.nhi_budget_per_day,
             "insider_budget_per_day": cfg.insider_budget_per_day,
+            "pvalue_mode": cfg.pvalue_mode,
         },
         "graph": graph_to_state(engine.graph),
         "graph_nulls": graph_nulls,

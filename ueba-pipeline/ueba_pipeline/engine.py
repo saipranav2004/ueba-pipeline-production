@@ -9,7 +9,7 @@ and directory-object change -- per event, as
 Dirichlet-smoothed edge surprise across several independently calibrated
 relationship views.
 
-Measured on the honest all-technique benchmark: 52/60 = 86.7% recall at 3.27
+Measured on the honest all-technique benchmark: 54/60 = 90.0% recall at 3.19
 false-positive entities/day (6 seeds, contamination=none). Reproduce with
 `walk-forward-eval`; see docs/evaluation.md.
 
@@ -196,6 +196,21 @@ class EngineConfig:
     # identity/deviation.py). Set either to 0 to silence that queue.
     nhi_budget_per_day: float = 0.5
     insider_budget_per_day: float = 0.5
+    # How a raw graph statistic becomes a p-value.
+    #   "predictive" -- the model's own discrete predictive p-value (Heard &
+    #                   Rubin-Delanchy 2016, eq. 2). SHIPPED. No empirical floor,
+    #                   so a sparse view can assert significance its calibration
+    #                   sample size could never support.
+    #   "empirical"  -- surprise scored against a frozen benign null, floored at
+    #                   1/(n_benign+1). The previous default, retained because it
+    #                   needs no destination vocabulary and is the cheaper path.
+    # Measured on two INDEPENDENT six-seed sets, predictive wins on both recall and
+    # false positives, and rescues account manipulation from the floor ties that
+    # made its peak-hour attribution degenerate:
+    #   seeds A: 52/60 @ 3.27 -> 54/60 @ 3.19   (account manip 0/5 -> 4/5)
+    #   seeds B: 47/60 @ 3.10 -> 49/60 @ 2.95   (account manip 1/5 -> 5/5)
+    # See docs/evaluation.md.
+    pvalue_mode: str = "predictive"
 
 
 @dataclass
@@ -440,10 +455,19 @@ class BehavioralEngine:
         tested_edges = []
         for view, edge in self.graph.edges_for(e):
             tested_edges.append((view, edge))
-        for view, s in self.graph.score_event_views(e, absorb=absorb):
-            null = self._graph_nulls.get(view)
-            if null is not None:
-                ps.append(float(null.pvalue(s)[0]))
+        if self.config.pvalue_mode == "predictive":
+            # The model's own predictive p-value: no empirical null, so no
+            # 1/(n_benign+1) floor to tie sparse-view evidence together.
+            for view, edge in tested_edges:
+                if view in self._graph_nulls:
+                    ps.append(self.graph.predictive_pvalue(view, edge))
+            if absorb:
+                self.graph.score_event_views(e, absorb=True)
+        else:
+            for view, s in self.graph.score_event_views(e, absorb=absorb):
+                null = self._graph_nulls.get(view)
+                if null is not None:
+                    ps.append(float(null.pvalue(s)[0]))
         if not ps:
             return
         p = sidak(min(ps), len(ps))

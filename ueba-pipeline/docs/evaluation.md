@@ -34,18 +34,17 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **52/60 = 86.7%** | **3.27** |
+| **engine** | **54/60 = 90.0%** | **3.19** |
 
-> **Moved from 53/60 at 3.31 by a simulator-realism fix, not a detector change.**
-> Service accounts previously produced no Kerberos service tickets at all, which
-> was both unrealistic (a service account requests a TGS for the resource it
-> drives, exactly as a person does) and misleading: it made *any* service-ticket
-> request by a service account a novel relationship, so a compromised credential
-> doing ordinary work looked anomalous for the wrong reason. Adding routine 4769s
-> to the service-account day changed the `tgs_enc` baseline, and
-> `account_manipulation` went 1/5 → 0/5 — one detection on the weakest technique,
-> already documented below as an evidence limit at n = 5. False positives improved
-> slightly. The detector is byte-identical across this change.
+> **History of this figure.** It was 53/60 at 3.31 until a *simulator-realism*
+> fix: service accounts produced no Kerberos service tickets at all, which made
+> *any* service-ticket request by one a novel relationship, so a compromised
+> credential doing ordinary work looked anomalous for the wrong reason. Adding
+> routine 4769s to the service-account day moved it to 52/60 at 3.27
+> (`account_manipulation` 1/5 → 0/5) with the detector unchanged. Switching the
+> p-value from an empirical null to the model's own predictive distribution
+> ("The predictive p-value", below) then took it to **54/60 at 3.19**, rescuing
+> account manipulation to 4/5.
 
 | technique | recall | | technique | recall |
 |---|---|---|---|---|
@@ -53,7 +52,7 @@ techniques. Alert budget 5 entities/day, strict attribution.
 | Kerberoasting | 8/8 | | password spray | 6/6 |
 | silver ticket | 8/8 | | golden ticket | 4/4 |
 | Pass-the-Hash | 8/9 | | LSASS dump | 4/4 |
-| account manipulation | 0/5 | | NTDS dump | 0/2 |
+| account manipulation | 4/5 | | NTDS dump | 0/2 |
 
 The per-technique split varies with attack placement across seeds; the total is
 stable to within a detection across estate revisions. The contamination guard
@@ -135,6 +134,72 @@ benign novelty routinely reaches 8.5. An estate with static addresses hides this
 because benign novelty is artificially rare and the over-flagging lands almost
 entirely on injected attacks.
 
+## The predictive p-value: escaping the empirical null's floor
+
+The empirical null is floored at `1/(n_benign+1)`. For a high-volume view that
+floor never binds (n in the thousands). For the **sparse `dir_op` view** it is the
+entire behaviour: it calibrates on a few dozen benign observations, so its smallest
+assertable p is ~0.03, and *every* genuinely extreme directory operation ties with
+every other at exactly that value.
+
+Those ties were the real cause of the account-manipulation failure, and the
+diagnosis is worth stating precisely because it is not the obvious one. An
+extreme-value tail was tried first, on the theory that the floor needed breaking,
+and changed nothing ("An extreme-value tail was measured and removed"). Instrumenting
+the scorer showed why: the attacks *do* score extremely (a `dir_op` surprise of 9.2
+nats, above the largest benign surprise the slice ever produced), but their p ties
+at the floor with many benign windows of the same principal — and the peak-hour
+selection then picks among tied windows arbitrarily, often landing on a benign one,
+which fails strict attribution.
+
+The fix is to take the p-value **from the model instead of from an empirical
+sample**. Heard & Rubin-Delanchy, *Network-wide anomaly detection via the Dirichlet
+process* (IEEE ISI 2016) — the paper that detected the LANL red team — score each
+connection by the predictive probability of an outcome *at least as improbable* as
+the realised one, their equation (2):
+
+```
+p = Σ over { b' : α*_b' ≤ α*_b } of  α*_b' / α* ,   α*_b = c_ab + α·π_b ,  α* = n_a + α
+```
+
+which is exactly the Dirichlet-multinomial predictive this detector already
+maintains. It has no calibration sample, hence no floor: a rare actor performing a
+rare operation is assigned a probability far below anything n=30 could support
+(measured on a synthetic directory view: 4.4e-4 against a floor of 0.03), while
+routine work returns exactly 1.0.
+
+Measured on **two independent six-seed sets**, same estates, only `pvalue_mode`
+differing:
+
+| seed set | empirical null | **predictive** | account manipulation |
+|---|---|---|---|
+| A (20250106–11) | 52/60 @ 3.27 | **54/60 @ 3.19** | 0/5 → **4/5** |
+| B (20250201–06) | 47/60 @ 3.10 | **49/60 @ 2.95** | 1/5 → **5/5** |
+
+Both sets agree: **+2 detections and lower false positives**, with the
+long-standing structural failure resolved. The trade is consistent and visible —
+one detection each on AS-REP roasting, Kerberoasting and silver ticket, against
+one gained on Pass-the-Hash and four on account manipulation. `predictive` is
+therefore the shipped default; `empirical` is retained (it needs no destination
+vocabulary and is the cheaper path).
+
+**Two correctness defects were found by testing this rather than trusting it**, and
+both would have been invisible in aggregate:
+
+1. **The sum was insertion-order dependent.** A bundle reloaded from JSON rebuilds
+   its dicts in a different order, and the few-ULP drift turned a p of exactly 1.0
+   into 0.999999999 — which passes the engine's `p < 1.0` "is this evidence" filter
+   and invents an alert the pre-save engine never raised. Scores must not depend on
+   whether the model came from memory or from disk. Fixed with an order-independent,
+   exactly-rounded summation (`math.fsum` over sorted contributions).
+2. **Routine behaviour did not return exactly 1.0.** When the observed outcome is
+   the most probable one, every outcome is included and the mass is exactly
+   `n_a + α`; floating-point normalisation returned 0.9999999999999999, so the most
+   routine edge an identity has opened a detection cell. Now returned exactly.
+
+Both are regression-tested (`test_auth_graph_anomaly.py`), including a test that
+the p-value is invariant under dict reordering.
+
 ## Address churn: the real-world false-positive driver
 
 The estate churns addresses the way a real one does — VPN pools, DHCP leases,
@@ -157,7 +222,7 @@ Every component is held to measured contribution.
 
 | component | evidence | verdict |
 |---|---|---|
-| edge surprise | 52/60; carries the product | keep |
+| edge surprise | 54/60; carries the product | keep |
 | per-view null calibration | without it, high-baseline views (`proc_access` ~5.5 nats benign) set the bar for low-baseline views (`user_src` ~0.29) | keep |
 | `tgs_enc` view | Kerberoasting 6/8; 0 without it | keep |
 | MIDAS burst term | cost 10 detections and 0.7 FP/day once it could actually fire | **removed** |
@@ -580,22 +645,14 @@ Windows Security and Sysmon captures.
    longer a pure floor, but a simulator cannot reproduce shared/kiosk hosts,
    service-account sprawl, M&A estates, or cloud identity. This is the largest
    open risk; only a labelled real corpus retires it.
-2. **Account manipulation (1/5).** An evidence limit, not a tuning failure — and
-   the mechanism is more specific than "the null floors". The `dir_op` view sees
-   only a few dozen benign operations in the calibration slice, so its null floors
-   the smallest assertable p at `1/(n+1) ~ 0.03`. But the deeper cause is
-   **attribution**: the principals are active admin-like accounts that already sit
-   inside the alert budget on their ordinary activity, and the injected operation
-   is not their single most anomalous hour, so it fails strict attribution
-   (peak-hour-in-span) even when the account alerts. **Breaking the floor does not
-   fix this**, and that was measured: a non-admin performing a privileged
-   directory change scores a `dir_op` surprise of ~9.2 nats — *above* the largest
-   benign surprise the calibration slice ever produced (~8.4) — yet an honest
-   Generalized-Pareto tail fit to a few dozen points assigns it a p *more*
-   conservative than the empirical floor, so it still cannot beat the principal's
-   own noisy baseline hours ("An extreme-value tail was measured and removed",
-   below). The remedies that would work here are not behavioural: a Tier-0
-   watchlist (directory context, i.e. a rule) or a baseline measured in months.
+2. **Account manipulation (4/5), previously 0-1/5.** Resolved by taking the
+   p-value from the model's predictive distribution rather than an empirical null
+   ("The predictive p-value", above). The earlier diagnosis — that the `dir_op`
+   null floors at `1/(n+1)` and cannot assert significance — was right about the
+   floor and wrong about the remedy: breaking the floor with an extreme-value tail
+   changed nothing, because the binding problem was that floor *ties* made
+   peak-hour attribution degenerate. A model-based p-value has no floor and no
+   ties. The remaining miss is a single instance across six seeds.
 3. **NTDS dump (0/2).** Its tools (`vssadmin`, `ntdsutil`) run legitimately on
    domain controllers, so it leaves no novel relational trace; the discriminating
    signal is a command line or an execution sequence.

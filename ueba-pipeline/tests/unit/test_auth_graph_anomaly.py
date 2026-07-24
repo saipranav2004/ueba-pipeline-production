@@ -170,3 +170,60 @@ def test_kerb_context_downgrade_is_scored_by_evidence_not_a_gate():
         "first ticket -- from the evidence, not a hardcoded view gate"
     )
 
+
+
+# ── model-based predictive p-value (Heard & Rubin-Delanchy 2016) ─────────────
+def _dir_op_detector():
+    """A directory-operation view: two busy admins and one ordinary account."""
+    from ueba_pipeline.graph.auth_graph_anomaly import (
+        AuthGraphAnomalyDetector, AuthGraphConfig,
+    )
+    d = AuthGraphAnomalyDetector(config=AuthGraphConfig(alpha=1.0))
+    for src, dst in ([("admin1", "groupadd")] * 40 + [("admin1", "pwreset")] * 10
+                     + [("admin2", "groupadd")] * 20 + [("bob", "acctcreate")]):
+        d._absorb("dir_op", (src, dst), 0.0)
+    return d
+
+
+def test_predictive_pvalue_matches_the_published_definition():
+    """Heard eq. (2): the predictive mass of every outcome at least as improbable."""
+    d = _dir_op_detector()
+    a, marg = d.config.alpha, d._dst_counts["dir_op"]
+    denom = d._view_totals["dir_op"] + max(len(marg), 1)
+
+    def brute(key_a, key_b):
+        stars = {b: d._edges["dir_op"].get((key_a, b), 0.0) + a * ((c + 1.0) / denom)
+                 for b, c in marg.items()}
+        n_a = d._src_totals["dir_op"].get(key_a, 0.0)
+        return sum(v for v in stars.values() if v <= stars[key_b]) / (n_a + a)
+
+    for src, dst in (("admin1", "groupadd"), ("admin1", "acctcreate"),
+                     ("bob", "groupadd"), ("admin2", "pwreset")):
+        assert d._directional_pvalue("dir_op", src, dst, d._dst_counts,
+                                     d._src_totals) == brute(src, dst)
+
+
+def test_predictive_pvalue_escapes_the_empirical_null_floor():
+    """A rare actor performing a privileged operation must be assertable far below
+    1/(n+1) -- the floor that ties every sparse-view alert together and makes the
+    peak-hour attribution degenerate."""
+    d = _dir_op_detector()
+    routine = d.predictive_pvalue("dir_op", ("admin1", "groupadd"))
+    rare = d.predictive_pvalue("dir_op", ("bob", "groupadd"))
+    assert rare < 1e-3 < routine
+    assert routine == 1.0
+
+
+def test_predictive_pvalue_is_insertion_order_independent():
+    """Scores must not depend on whether the model came from memory or from disk.
+
+    A bundle reloaded from JSON rebuilds these dicts in a different insertion
+    order; an order-dependent sum drifts a few ULPs, which is enough to turn a
+    p of exactly 1.0 into 0.999999999 and invent an alert.
+    """
+    d = _dir_op_detector()
+    before = d.predictive_pvalue("dir_op", ("admin1", "groupadd"))
+    for store in (d._dst_counts, d._src_counts, d._src_totals, d._dst_totals):
+        store["dir_op"] = dict(reversed(list(store["dir_op"].items())))
+    d._edges["dir_op"] = dict(reversed(list(d._edges["dir_op"].items())))
+    assert d.predictive_pvalue("dir_op", ("admin1", "groupadd")) == before

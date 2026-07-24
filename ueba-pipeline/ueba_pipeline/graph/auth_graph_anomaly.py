@@ -326,6 +326,102 @@ class AuthGraphAnomalyDetector:
         rev = _cond(self._src_counts, self._dst_totals, dst, src)   # P(src | dst)
         return max(fwd, rev)
 
+    # -- model-based predictive p-value (Heard & Rubin-Delanchy 2016) --------
+    def predictive_pvalue(self, view: str, edge: Tuple[str, str]) -> float:
+        """Discrete predictive p-value for this edge, from the model itself.
+
+        Heard & Rubin-Delanchy, "Network-wide anomaly detection via the Dirichlet
+        process" (IEEE ISI 2016), score each connection by the predictive
+        probability of seeing an outcome *at least as improbable* as the realised
+        one -- their equation (2):
+
+            p = sum over { b' : a*_b' <= a*_b } of  a*_b' / a*
+
+        with ``a*_b = c_ab + alpha * pi_b`` and ``a* = n_a + alpha``, i.e. exactly
+        the Dirichlet-multinomial predictive this detector already maintains. Their
+        method detected the LANL red team with it.
+
+        WHY THIS EXISTS ALONGSIDE THE EMPIRICAL NULL. The shipped path turns raw
+        surprise into a p-value against a *frozen empirical null*, which is floored
+        at ``1/(n_benign+1)``. For a sparse view that floor dominates: ``dir_op``
+        calibrates on a few dozen observations, so its smallest assertable p is
+        ~0.03 and every genuinely extreme directory operation ties with every other
+        at exactly that value. Measured, those ties are what make the peak-hour
+        attribution degenerate -- an entity's "most anomalous window" is then picked
+        arbitrarily among tied windows, often a benign one.
+
+        This statistic has no such floor: it is computed from the model's own
+        predictive distribution, so a rare operation by a rare actor can be
+        assigned a probability far below what the calibration sample size would
+        allow. It is naturally conservative (the paper notes the discrete p-value is
+        stochastically larger than uniform), which is the right direction to err.
+
+        Both directions are scored and the smaller taken, mirroring the ``max`` over
+        the two conditionals in :meth:`_surprise`.
+        """
+        src, dst = edge
+        fwd = self._directional_pvalue(view, src, dst, self._dst_counts,
+                                       self._src_totals)
+        rev = self._directional_pvalue(view, dst, src, self._src_counts,
+                                       self._dst_totals)
+        return min(fwd, rev)
+
+    def _directional_pvalue(self, view: str, key_a: str, key_b: str,
+                            counts_b, totals_a) -> float:
+        """One conditional direction of the predictive p-value."""
+        a = self.config.alpha
+        marg = counts_b.get(view, {})
+        if not marg:
+            return 1.0
+        total = self._view_totals[view]
+        denom_pi = total + max(len(marg), 1)
+        n_a = totals_a.get(view, {}).get(key_a, 0.0)
+
+        # a*_b for the realised outcome. The per-edge count is only non-zero for
+        # the (a, b) pair actually observed together.
+        c_ab = self._edges[view].get((key_a, key_b) if counts_b is self._dst_counts
+                                     else (key_b, key_a), 0.0)
+        pi_b = (marg.get(key_b, 0.0) + 1.0) / denom_pi
+        star_obs = c_ab + a * pi_b
+
+        # Sum a*_b' over every outcome at least as improbable. Outcomes this source
+        # has never taken contribute only alpha*pi; the handful it has taken carry
+        # their counts too, so they are corrected individually.
+        #
+        # The summation is deliberately ORDER-INDEPENDENT and exactly rounded:
+        # contributions are sorted and added with math.fsum. A plain running total
+        # over dict order is not reproducible, because a bundle reloaded from JSON
+        # rebuilds these dicts in a different insertion order, and the few-ULP
+        # difference that follows is enough to turn a p of exactly 1.0 into
+        # 0.999999999 -- which passes a `p < 1.0` filter and invents an alert that
+        # the pre-save engine did not raise. Scores must not depend on whether the
+        # model came from memory or from disk.
+        contributions = []
+        excluded = False
+        for b_prime, count in marg.items():
+            pi = (count + 1.0) / denom_pi
+            star = a * pi
+            if b_prime != key_b:
+                edge_key = ((key_a, b_prime) if counts_b is self._dst_counts
+                            else (b_prime, key_a))
+                star += self._edges[view].get(edge_key, 0.0)
+            else:
+                star = star_obs
+            if star <= star_obs:
+                contributions.append(star)
+            else:
+                excluded = True
+        if not excluded:
+            # The observed outcome is the most probable one, so every outcome is
+            # at least as improbable and the mass sums to exactly (n_a + alpha).
+            # Returning the computed ratio instead would give 0.9999999999999999
+            # from the pi normalisation's rounding -- and the engine treats any
+            # p < 1.0 as evidence, so the most routine behaviour an identity has
+            # would open a detection cell. Exactly 1.0 means "no evidence".
+            return 1.0
+        total_mass = math.fsum(sorted(contributions))
+        return float(min(max(total_mass / (n_a + a), 1e-12), 1.0))
+
     def _absorb(self, view: str, edge: Tuple[str, str], score: float) -> None:
         # MIDAS-F: do not let a flagged edge normalise itself into the baseline.
         if score >= self.config.absorb_surprise:
