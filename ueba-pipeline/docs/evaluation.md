@@ -542,7 +542,14 @@ Windows Security and Sysmon captures.
    may carry a signal an active principal's own baseline does not already drown.
    Success criterion: recall > 0 on real labelled data *without* any
    attack-specific rule.
-3. **A periodicity / non-human-identity model class** (Fourier g-test edge
-   classification) for service accounts.
+3. **NHI-specific *detection*.** Identity *typing* now ships — automated vs human
+   from activity timing, 100% service-account recall at 0% human false positives
+   on the estate ([identities.md](identities.md)). It found that Fisher's g-test
+   does not separate the populations at logon granularity (a weekday work rhythm is
+   itself periodic), so typing keys on weekend activity and time-of-day shape. The
+   remaining step is a periodicity-*deviation* detector over typed NHIs (a hijacked
+   schedule leaves no novel relationship for the graph to score), added as a
+   separate calibrated track, which needs a simulator NHI-schedule-hijack attack to
+   measure against.
 4. **Scale test** beyond a few hundred identities; adopt count-min sketching if
    exact per-edge counters break memory or latency.

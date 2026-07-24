@@ -5,6 +5,7 @@ Commands:
   score             load bundle -> ingest -> score -> ranked entity alerts
   score-stream      load bundle -> score online, adapting the baseline as it goes
   drift-check       compare a live window's capabilities against the trained bundle
+  classify-identities  type each identity as automated (NHI) or human from timing
   walk-forward-eval causal out-of-time evaluation of the engine
   comiset-eval      real-data eval on a COMISET archive (benign novelty + per-auth ROC)
   model-benchmark   compare classical models on the feature matrix (leakage-resistant)
@@ -125,6 +126,31 @@ def cmd_drift(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
+def cmd_classify_identities(args: argparse.Namespace) -> None:
+    """Type every identity as automated (NHI) or human from activity timing alone.
+
+    Reads only event timestamps, so it runs on any estate with no configuration.
+    Prints automated identities first, then humans ordered by how periodic they
+    look. This is enrichment -- it does NOT touch detection scoring; it is the
+    substrate an NHI-specific baseline would build on. See docs/identities.md.
+    """
+    from ueba_pipeline.identity.typing import classify_identities
+
+    profiles = classify_identities(_read_events(args.data_dir), min_events=args.min_events)
+    rows = sorted(profiles.values(), key=lambda p: (p.kind != "automated", p.periodicity_p))
+    counts = {k: sum(1 for p in rows if p.kind == k) for k in ("automated", "human", "unknown")}
+    print(f"[classify-identities] {len(rows)} identities: "
+          f"{counts['automated']} automated, {counts['human']} human, "
+          f"{counts['unknown']} unknown", file=sys.stderr)
+    print(f"{'entity':<24s} {'type':<10s} {'events':>6s} {'wkend':>6s} "
+          f"{'todR':>5s} {'g-test p':>9s}  reason")
+    limit = args.limit if args.limit and args.limit > 0 else len(rows)
+    for p in rows[:limit]:
+        print(f"{p.entity:<24s} {p.kind:<10s} {p.n_events:>6d} "
+              f"{p.weekend_active_ratio:>6.2f} {p.tod_concentration:>5.2f} "
+              f"{p.periodicity_p:>9.1e}  {p.reason}")
+
+
 def cmd_lanl_eval(args: argparse.Namespace) -> None:
     """Per-authentication ROC on the LANL 2015 auth stream (or a synthetic
     LANL-format fixture). Validates the production graph detector against the
@@ -243,6 +269,14 @@ def main() -> None:
     p_drift.add_argument("--data-dir", required=True)
     p_drift.add_argument("--model-dir", default="artifacts/models/engine")
     p_drift.set_defaults(func=cmd_drift)
+
+    p_ci = sub.add_parser("classify-identities",
+                          help="Type each identity as automated (NHI) or human from activity timing")
+    p_ci.add_argument("--data-dir", required=True)
+    p_ci.add_argument("--min-events", type=int, default=12,
+                      help="minimum events before an identity is typed (else 'unknown')")
+    p_ci.add_argument("--limit", type=int, default=None, help="print only the top N rows")
+    p_ci.set_defaults(func=cmd_classify_identities)
 
     p_lanl = sub.add_parser("lanl-eval", help="Per-auth ROC on LANL 2015 (or a LANL-format fixture)")
     p_lanl.add_argument("--auth", required=True, help="path to auth.txt")

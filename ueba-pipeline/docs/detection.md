@@ -154,9 +154,11 @@ is curve-fitting, not calibration.
   NTDS extraction is missed, because the discriminating signal is directory
   context or a command line, not a novel relationship. Both are evidence limits
   on this estate rather than tuning failures; see [evaluation.md](evaluation.md).
-- **Model periodicity.** Service accounts are statistically distinct from humans
-  (strong periodicity, low entropy, narrow baselines) and are currently modelled
-  with the same machinery as people.
+- **Model periodicity in detection.** Service accounts are statistically distinct
+  from humans (strong periodicity, low entropy, narrow baselines). They are now
+  *typed* apart from people by behaviour ([identities.md](identities.md)), but the
+  detection path still scores them with the same machinery; an NHI-specific
+  deviation track is the documented next step.
 - **Generalise beyond a simulator.** No detection-performance figure is validated
   against real labelled authentication data.
 

@@ -81,6 +81,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | `score` | load bundle → score → ranked entity alerts at an analyst budget |
 | `score-stream` | score online, adapting the baseline as events arrive |
 | `drift-check` | compare a live window's log-source capabilities against the bundle |
+| `classify-identities` | type each identity as automated (NHI) or human from activity timing |
 | `walk-forward-eval` | causal out-of-time evaluation: per-technique recall, FP/day |
 | `comiset-eval` | real-data eval on a COMISET archive: per-view benign novelty + per-auth ROC |
 | `model-benchmark` | compare classical models under four leakage-resistant protocols |
@@ -95,6 +96,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | the statistical design and how each attack is caught | [docs/detection.md](docs/detection.md) |
 | the feature contract and causality guarantees | [docs/features.md](docs/features.md) |
 | how the authentication graph is built and scored | [docs/graph.md](docs/graph.md) |
+| how identities are typed automated (NHI) vs human | [docs/identities.md](docs/identities.md) |
 | evaluation methodology, results, and limitations | [docs/evaluation.md](docs/evaluation.md) |
 | classical models compared under disjoint splits | [docs/model_comparison.md](docs/model_comparison.md) |
 | public datasets and real-data validation | [docs/datasets.md](docs/datasets.md) |
@@ -112,6 +114,8 @@ ueba_pipeline/
   graph/auth_graph_anomaly.py   Dirichlet-smoothed bidirectional edge surprise
   graph/sessions.py             4624 logons -> causal host->account resolution
   graph/identity_graph.py       structural graph (Tier-0, blast radius) — analyst tooling
+  identity/typing.py            type an identity automated (NHI) vs human by activity timing
+  models/periodicity.py         Fisher's exact g-test for periodic activity
   models/pvalue.py              frozen empirical null -> calibrated p-value
   models/fisher.py              Tippett / Šidák / Benjamini-Hochberg
   models/serialization.py       non-executable, signed JSON + NumPy bundle
@@ -122,7 +126,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     107 tests
+tests/unit/                     130 tests
 ```
 
 ## Model persistence

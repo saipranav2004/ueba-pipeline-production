@@ -441,10 +441,12 @@ well-chosen behavioural statistics carry most of what a tabular model can use he
   SIEM's analytics surface. The design bet (stated in [architecture.md](architecture.md))
   is that a few well-calibrated behavioural and relational models generalise further
   than a large rule catalogue — not that this feature set is exhaustive.
-- **No service-account / non-human-identity model class.** Service accounts are
+- **No service-account / non-human-identity *feature* class.** Service accounts are
   statistically distinct (strong periodicity, low entropy, narrow baselines) but are
-  currently described by the same features as people. A periodicity model is the
-  documented next capability ([evaluation.md](evaluation.md)).
+  described by the same features as people here. They are now *typed* apart by
+  activity timing ([identities.md](identities.md)); an NHI-specific feature/detection
+  class building on that typing is the documented next capability
+  ([evaluation.md](evaluation.md)).
 - **Indicators are simulator-shaped.** The quarantined `*_flag` features encode
   techniques the simulator injects; on real data they are provenance, not ground
   truth (see the COMISET label caveats in [datasets.md](datasets.md)).
