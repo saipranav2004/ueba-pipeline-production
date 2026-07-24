@@ -189,12 +189,20 @@ this document.
 
 ---
 
-# Part 2 — The NHI temporal track (detection)
+# Part 2 — The behavioural deviation track (detection)
 
-`ueba_pipeline/identity/nhi_detector.py`. CLI: `nhi-scan`. This is the capability
-typing unlocks, and unlike typing it *is* a detector — with its **own ranked queue
-and its own budget**, deliberately never merged into the relational detector's
-Tippett minimum or its alert budget.
+`ueba_pipeline/identity/deviation.py`. CLI: `deviation-scan`. Two **separate
+queues, each with its own budget**, neither ever merged into the relational
+detector's Tippett minimum or its alert budget:
+
+| queue | signal | threat class | relational engine | this track |
+|---|---|---|---|---|
+| **nhi** | schedule (hour-of-day) | compromised non-human identity | 0/18 | **9/11 = 81.8%** @ 0.31 FP/day |
+| **insider** | rate (volume) | insider / credential abuse | 1/9 | **16/18 = 88.9%** @ 0.17 FP/day |
+
+Both cover classes the relational views are blind to **by construction**: neither
+creates a new relationship. The insider figure replaces a long-standing 1/9 — see
+§14 for why the earlier attempt failed and what changed.
 
 ## 8. The gap, and why the shipped engine cannot close it
 
@@ -319,14 +327,75 @@ TPR for 0.13% FPR**.
    Sunday inside its usual hour is not flagged. Day-of-week is the natural next
    dimension and was left out rather than added untested.
 
-## 13. Where this goes next
+---
 
-- **Day-of-week and inter-arrival modelling**, on the same Dirichlet/circular
-  machinery, to close limitation 4.
-- **Volume-per-schedule**: an identity that keeps its hours but does ten times its
-  usual work is the remaining NHI blind spot, and it is the same open problem as
-  insider volume abuse ([evaluation.md](evaluation.md)) — worth solving once, in
-  this track, where it has its own budget and cannot displace relational evidence.
+## 14. The volume signal, and why the earlier attempt failed
+
+Insider abuse sat at **1/9** for a long time, with a per-entity volume signal
+recorded as *built and rejected*. Re-examined, the rejection turned out to be
+about **two separable things**, and only one of them was a property of the idea:
+
+**The estimator was wrong for the data.** The earlier attempt scored an identity's
+hourly count against its own **median and MAD**. Counts are not that kind of
+quantity: most identity-hours contain zero or one event, so the MAD is frequently
+exactly 0 and every non-median observation becomes infinitely anomalous; counts are
+also skewed with variance tied to the mean, which a symmetric spread misstates; and
+median/MAD needs the sample retained, so it cannot stream.
+
+The literature's answer for count anomalies is a **count model**: Heard, Weston,
+Platanioti & Hand (2010) score activity counts per entity per period with a Poisson
+likelihood under a conjugate **Gamma** prior, and signal when an observation falls
+far into the tail of the **posterior predictive** — which for a Gamma-Poisson pair
+is **Negative Binomial** in closed form. That is the same "upper tail probability"
+modus operandi the rest of this engine already uses (Turcotte et al., IEEE ISI
+2016). It also needs only two sufficient statistics per entity (total count,
+periods observed), so it updates in O(1) and streams. Implemented in
+[`models/counts.py`](../ueba_pipeline/models/counts.py).
+
+**The integration was wrong.** The signal was fused into the relational detector's
+shared Tippett minimum and shared budget, where it cost 41 detections elsewhere.
+That is the displacement law this codebase has now measured four times.
+
+Changing both gives **16/18 = 88.9% at 0.17 FP identities/day**, with the
+relational headline untouched by construction. The lesson is recorded because it
+generalises: *a signal that measures badly may be a bad estimator or a bad
+integration before it is a bad idea.*
+
+## 15. Why the queues are separate — measured, not assumed
+
+Running all three signals in one queue is markedly **worse** than either queue
+alone. On the NHI corpus at 0.5 alerts/day:
+
+| signals | recall (covered) | FP/day |
+|---|---|---|
+| **hour** (shipped as the NHI queue) | **9/11 = 81.8%** | **0.31** |
+| dow | 0/11 = 0% | 0.50 |
+| volume | 1/18 = 5.6% | 0.48 |
+| hour + dow | 8/11 = 72.7% | 0.34 |
+| hour + volume | 1/18 = 5.6% | 0.48 |
+| hour + dow + volume | 1/18 = 5.6% | 0.48 |
+
+`volume` covers **every identity in the estate** while `hour` covers only the
+handful with a schedule, so under a shared budget the broad signal floods the queue
+and displaces the narrow one — the same law that removed `src_dst`, a volume
+signal and a process-lineage view from the relational engine. Applying "separate
+queues, not better fusion" *recursively* is the resolution.
+
+**`dow` is implemented but not shipped in either queue.** It contributes nothing
+here (0/18 alone; −1 detection in combination), and the reason is structural rather
+than a defect: every service account in this estate runs seven days a week, so no
+day is unusual for one. The corpus cannot exercise the signal. It would matter for
+a weekday-only batch job triggered on a Sunday, which this estate does not contain,
+so it stays available behind `enabled_signals` and is not shipped on evidence that
+does not yet exist.
+
+## 16. Where this goes next
+
+- **A weekday-only NHI corpus**, to test `dow` on evidence that can actually
+  exercise it.
+- **Inter-arrival modelling** (a poller whose period changes), the natural
+  complement to hour-of-day for round-the-clock agents — the cohort neither queue
+  currently covers.
 - **Real-data recalibration**, the standing requirement for every figure here.
 
 ## References

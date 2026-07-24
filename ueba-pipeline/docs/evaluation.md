@@ -360,7 +360,34 @@ no measurable value, so it was removed rather than shipped dark; the mechanism i
 recorded here so it is not re-attempted without the conditions that would make it
 pay.
 
-## Open capability: volume abuse over an established relationship
+## Closed capability: volume abuse over an established relationship
+
+**Superseded — this section is kept because the diagnosis below is correct and the
+resolution turned on understanding exactly *why* the first attempt failed.** Insider
+volume abuse now measures **16/18 = 88.9% at 0.17 FP identities/day** in a separate
+queue with its own budget ([identities.md](identities.md) §14), against the 1/9
+recorded below.
+
+Two things were wrong with the first attempt, and only one of them was about the
+idea:
+
+1. **The estimator.** It scored hourly counts against a **median and MAD**. Counts
+   are not that kind of quantity — most identity-hours hold zero or one event, so
+   the MAD is frequently exactly 0 and every non-median observation becomes
+   infinitely anomalous; counts are skewed with variance tied to the mean; and
+   median/MAD cannot stream. The literature's instrument for count anomalies is a
+   count model: a Poisson likelihood under a conjugate Gamma prior, signalling on
+   the tail of the **Negative-Binomial posterior predictive** (Heard, Weston,
+   Platanioti & Hand 2010) — the same upper-tail modus operandi used everywhere
+   else here, and O(1) to update.
+2. **The integration**, diagnosed correctly at the time (below): fusing it into the
+   shared Tippett minimum and shared budget cost 41 detections elsewhere.
+
+Fixing both closes the gap with the relational headline untouched. The general
+lesson is worth keeping: *a signal that measures badly may be a bad estimator or a
+bad integration before it is a bad idea.*
+
+### The original finding, retained
 
 The benchmark's ten techniques are all credential theft or lateral movement —
 each one creates a relationship the identity did not have. Insider abuse,

@@ -42,10 +42,15 @@ Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
 Pass-the-Hash `8/9`, AS-REP roasting `6/6`, password spray `6/6`, golden ticket
 `4/4`, LSASS dump `4/4`, account manipulation `0/5`, NTDS dump `0/2`.
 
-A second, **separately budgeted** track covers compromised non-human identities —
-a class this relational engine detects `0/18` of, because a hijacked service
-account creates no new relationship. It reaches `9/11 = 81.8%` on the identities
-it covers at 0.31 FP/day; see [docs/identities.md](docs/identities.md).
+Two **separately budgeted** queues cover the threat classes this relational engine
+is blind to by construction, because neither creates a new relationship:
+
+| queue | threat class | relational engine | this track |
+|---|---|---|---|
+| NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
+| insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
+
+See [docs/identities.md](docs/identities.md).
 
 **These are simulator numbers.** Read [docs/evaluation.md](docs/evaluation.md)
 before quoting them: the estate is self-generated, and no detection-performance
@@ -88,7 +93,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 | `score-stream` | score online, adapting the baseline as events arrive |
 | `drift-check` | compare a live window's log-source capabilities against the bundle |
 | `classify-identities` | type each identity as automated (NHI) or human from activity timing |
-| `nhi-scan` | rank scheduled identities by deviation from their own schedule (own budget) |
+| `deviation-scan` | NHI schedule + insider rate queues, each with its own budget |
 | `walk-forward-eval` | causal out-of-time evaluation: per-technique recall, FP/day |
 | `comiset-eval` | real-data eval on a COMISET archive: per-view benign novelty + per-auth ROC |
 | `model-benchmark` | compare classical models under four leakage-resistant protocols |
@@ -122,7 +127,8 @@ ueba_pipeline/
   graph/sessions.py             4624 logons -> causal host->account resolution
   graph/identity_graph.py       structural graph (Tier-0, blast radius) — analyst tooling
   identity/typing.py            type an identity automated (NHI) vs human by activity timing
-  identity/nhi_detector.py      NHI schedule-deviation track (separate queue + budget)
+  identity/deviation.py         NHI schedule + insider rate queues (own budgets)
+  models/counts.py              Gamma-Poisson count anomaly (Negative-Binomial tail)
   models/periodicity.py         Fisher's exact g-test for periodic activity
   models/pvalue.py              frozen empirical null -> calibrated p-value
   models/fisher.py              Tippett / Šidák / Benjamini-Hochberg
@@ -134,7 +140,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     137 tests
+tests/unit/                     150 tests
 ```
 
 ## Model persistence
@@ -159,9 +165,6 @@ comparison harness, and real-telemetry ingestion validation.
 - **Account manipulation (0/5) and NTDS dump (0/2)** are evidence limits on this
   estate, not tuning failures — both live in views too sparse to assert
   significance from.
-- **Volume abuse over an established relationship is not detected** (1/9 on an
-  insider data-staging corpus). Relational novelty is the wrong instrument for a
-  threat that creates no new relationship; see [docs/evaluation.md](docs/evaluation.md).
 - **Round-the-clock non-human identities are out of the NHI track's scope** — a
   poller active in every hour has no schedule to deviate from, so a compromise of
   one needs a volume or relationship instrument, not a temporal one.

@@ -154,6 +154,9 @@ is curve-fitting, not calibration.
   NTDS extraction is missed, because the discriminating signal is directory
   context or a command line, not a novel relationship. Both are evidence limits
   on this estate rather than tuning failures; see [evaluation.md](evaluation.md).
+  Two other no-new-relationship classes — compromised service accounts and insider
+  rate abuse — are covered by the separate deviation queues
+  ([identities.md](identities.md)), not by this path.
 - **Model periodicity in detection.** Service accounts are statistically distinct
   from humans (strong periodicity, low entropy, narrow baselines). They are now
   *typed* apart from people by behaviour, and a **separate NHI track** now scores

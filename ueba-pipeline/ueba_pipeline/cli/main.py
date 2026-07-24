@@ -6,7 +6,7 @@ Commands:
   score-stream      load bundle -> score online, adapting the baseline as it goes
   drift-check       compare a live window's capabilities against the trained bundle
   classify-identities  type each identity as automated (NHI) or human from timing
-  nhi-scan          rank scheduled identities by deviation from their own schedule
+  deviation-scan    NHI schedule + insider rate queues (each its own budget)
   walk-forward-eval causal out-of-time evaluation of the engine
   comiset-eval      real-data eval on a COMISET archive (benign novelty + per-auth ROC)
   model-benchmark   compare classical models on the feature matrix (leakage-resistant)
@@ -152,17 +152,23 @@ def cmd_classify_identities(args: argparse.Namespace) -> None:
               f"{p.periodicity_p:>9.1e}  {p.reason}")
 
 
-def cmd_nhi_scan(args: argparse.Namespace) -> None:
-    """Rank scheduled identities by how far off their own schedule they ran.
+def cmd_deviation_scan(args: argparse.Namespace) -> None:
+    """Rank identities that deviated from their OWN behavioural baseline.
 
-    A SEPARATE queue with its own budget: this never enters the relational
-    detector's ranking or its alert budget, because a signal folded into that
-    shared minimum was repeatedly measured to displace stronger evidence. It is
-    the track that covers compromised service-account use, which creates no new
-    relationship and is therefore invisible to the relational views.
-    See docs/identities.md.
+    Two SEPARATE queues, each with its own budget, neither of which ever enters
+    the relational detector's ranking or budget:
+
+      nhi     -- schedule deviation, for compromised non-human identities
+      insider -- rate deviation, for insider / credential abuse
+
+    They are separate because a signal folded into a shared minimum was
+    repeatedly measured to displace stronger evidence -- including these two
+    against each other. Both cover threat classes the relational views are blind
+    to by construction. See docs/identities.md.
     """
-    from ueba_pipeline.identity.nhi_detector import NHITemporalDetector
+    from ueba_pipeline.identity.deviation import (
+        insider_volume_queue, nhi_schedule_queue,
+    )
 
     events = _read_events(args.data_dir)
     split_at = int(len(events) * args.train_fraction)
@@ -170,21 +176,30 @@ def cmd_nhi_scan(args: argparse.Namespace) -> None:
     if not test:
         train, test = events, events
 
-    det = NHITemporalDetector().fit(train)
-    alerts = det.score(test, budget_per_day=args.budget_per_day)
-    print(f"[nhi-scan] {len(det.covered)} scheduled identities covered; "
-          f"{sum(1 for a in alerts if a.alerted)} alerted at "
-          f"{args.budget_per_day}/day", file=sys.stderr)
-    if not det.covered:
-        print("[nhi-scan] no identity has a schedule concentrated enough to score "
-              "against; nothing to report", file=sys.stderr)
-        return
-    print(f"{'entity':<24s} {'p':>10s} {'surprise':>9s} {'windows':>8s}  peak hour")
-    for a in alerts:
-        mark = "ALERT " if a.alerted else "      "
-        peak = a.top_hour.isoformat() if a.top_hour else "-"
-        print(f"{mark}{a.entity:<18s} {a.p_value:>10.2e} {a.surprise:>9.2f} "
-              f"{a.n_windows:>8d}  {peak}")
+    queues = {"nhi": (nhi_schedule_queue, args.nhi_budget_per_day),
+              "insider": (insider_volume_queue, args.insider_budget_per_day)}
+    wanted = list(queues) if args.queue == "both" else [args.queue]
+
+    for name in wanted:
+        factory, budget = queues[name]
+        track = factory().fit(train)
+        alerts = track.score(test, budget_per_day=budget)
+        fired = [a for a in alerts if a.alerted]
+        detail = (f"{len(track.covered)} scheduled identities covered"
+                  if name == "nhi" else f"{len(alerts)} identities scored")
+        print(f"[{name}] {detail}; {len(fired)} alerted at {budget}/day",
+              file=sys.stderr)
+        if not alerts:
+            print(f"[{name}] nothing to report", file=sys.stderr)
+            continue
+        print(f"\n== {name} queue ==")
+        print(f"{'entity':<24s} {'p':>10s} {'surprise':>9s} {'signal':>7s} "
+              f"{'windows':>8s}  peak hour")
+        for a in alerts[:args.limit] if args.limit else alerts:
+            mark = "ALERT " if a.alerted else "      "
+            peak = a.top_hour.isoformat() if a.top_hour else "-"
+            print(f"{mark}{a.entity:<18s} {a.p_value:>10.2e} {a.surprise:>9.2f} "
+                  f"{a.signal:>7s} {a.n_windows:>8d}  {peak}")
 
 
 def cmd_lanl_eval(args: argparse.Namespace) -> None:
@@ -314,16 +329,20 @@ def main() -> None:
     p_ci.add_argument("--limit", type=int, default=None, help="print only the top N rows")
     p_ci.set_defaults(func=cmd_classify_identities)
 
-    p_nhi = sub.add_parser("nhi-scan",
-                           help="Rank scheduled identities by deviation from their own "
-                                "schedule (separate track, separate budget)")
-    p_nhi.add_argument("--data-dir", required=True)
-    p_nhi.add_argument("--train-fraction", type=float, default=0.60,
-                       help="earlier fraction of events used to learn schedules")
-    p_nhi.add_argument("--budget-per-day", type=float, default=0.5,
-                       help="this track's OWN alert budget; independent of the "
-                            "relational detector's --alert-budget-per-day")
-    p_nhi.set_defaults(func=cmd_nhi_scan)
+    p_dev = sub.add_parser("deviation-scan",
+                           help="Rank identities deviating from their own baseline: "
+                                "NHI schedule and insider rate queues, each with "
+                                "its own budget")
+    p_dev.add_argument("--data-dir", required=True)
+    p_dev.add_argument("--queue", choices=["nhi", "insider", "both"], default="both")
+    p_dev.add_argument("--train-fraction", type=float, default=0.60,
+                       help="earlier fraction of events used to learn baselines")
+    p_dev.add_argument("--nhi-budget-per-day", type=float, default=0.5,
+                       help="NHI queue's OWN budget; independent of every other")
+    p_dev.add_argument("--insider-budget-per-day", type=float, default=0.5,
+                       help="insider queue's OWN budget; independent of every other")
+    p_dev.add_argument("--limit", type=int, default=None, help="print only the top N rows")
+    p_dev.set_defaults(func=cmd_deviation_scan)
 
     p_lanl = sub.add_parser("lanl-eval", help="Per-auth ROC on LANL 2015 (or a LANL-format fixture)")
     p_lanl.add_argument("--auth", required=True, help="path to auth.txt")
