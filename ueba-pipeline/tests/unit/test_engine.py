@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from ueba_pipeline.models.pvalue import EmpiricalPValue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -21,7 +22,7 @@ from ueba_pipeline.engine import (
 
 os.environ.setdefault("UEBA__SECURITY__MODEL_SIGNING_KEY", "unit-test-key")
 
-H = datetime(2025, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+H = datetime(2025, 1, 1, 9, 0, 0, tzinfo=UTC)
 
 
 def test_is_graph_event_matches_exactly_not_by_prefix():
@@ -65,7 +66,8 @@ def test_rollup_is_sidak_corrected_not_accumulating():
     how many hours were tested, so an entity watched for longer does not become
     suspicious merely by being watched."""
     eng = BehavioralEngine()
-    mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4, tested_edges={("v", ("a", "b"))})
+    mild = [WindowDetection("u", datetime(2025, 1, 1, h), graph_p=0.4,
+                            tested_edges={("v", ("a", "b"))})
             for h in range(24)]
     risks = eng._rollup(mild, observed_days=1.0)
     assert risks[0].p_value > 0.05, "24 mild hours must not become significant"
@@ -73,7 +75,8 @@ def test_rollup_is_sidak_corrected_not_accumulating():
 
 def test_alerts_respect_the_analyst_budget():
     eng = BehavioralEngine(config=EngineConfig(alert_mode="budget", alert_budget_per_day=2.0))
-    ds = [WindowDetection(f"u{i}", datetime(2025, 1, 1, 1), graph_p=10.0 ** -(11 - i), tested_edges={("v", ("a", "b"))})
+    ds = [WindowDetection(f"u{i}", datetime(2025, 1, 1, 1), graph_p=10.0 ** -(11 - i),
+                          tested_edges={("v", ("a", "b"))})
           for i in range(10)]
     risks = eng._rollup(ds, observed_days=1.0)
     assert len(eng.alerts(risks)) == 2
@@ -133,7 +136,7 @@ def test_score_stream_emits_detections_and_stays_pure_in_batch():
 def _sysmon10(src, tgt, host="ws1", minute=0):
     return SimpleNamespace(
         event_type="sysmon_10",
-        event_time=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc) + timedelta(minutes=minute),
+        event_time=datetime(2025, 1, 1, 9, 0, tzinfo=UTC) + timedelta(minutes=minute),
         computer_name=host,
         fields={"source_image": src, "target_image": tgt},
     )
@@ -154,7 +157,8 @@ def test_per_view_calibration_contains_a_churny_view():
     per_view = EmpiricalPValue().fit(churn)
     pooled = EmpiricalPValue().fit(np.concatenate([stable, churn]))
     probe = 5.2                                          # a typical BENIGN churn surprise
-    assert per_view.pvalue(probe)[0] > 0.2, "a benign churn edge must be unremarkable in its own null"
+    assert per_view.pvalue(probe)[0] > 0.2, \
+        "a benign churn edge must be unremarkable in its own null"
     assert pooled.pvalue(probe)[0] < per_view.pvalue(probe)[0], (
         "a single pooled null makes the same benign churn edge look more significant, "
         "which is the flooding per-view calibration prevents"

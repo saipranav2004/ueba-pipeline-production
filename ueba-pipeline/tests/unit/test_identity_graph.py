@@ -18,8 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 nx = pytest.importorskip("networkx")
 
-from ueba_pipeline.graph.identity_graph import IdentityGraph, NODE_COMPUTER
-
+from ueba_pipeline.graph.identity_graph import IdentityGraph
 
 _ROSTER = {"rverma": "IT", "asharma": "IT", "jdoe": "Finance"}
 _ADMINS = [

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 def test_lanl_adapter_maps_auth_and_matches_redteam(tmp_path):
     from make_lanl_fixture import generate
+
     from ueba_pipeline.evaluation.lanl_adapter import load_lanl
 
     generate(str(tmp_path), n_users=120, days=3, seed=3)
@@ -28,8 +29,9 @@ def test_lanl_adapter_maps_auth_and_matches_redteam(tmp_path):
 
 def test_lanl_roc_recovers_embedded_lateral_movement(tmp_path):
     from make_lanl_fixture import generate
-    from ueba_pipeline.evaluation.lanl_adapter import load_lanl
+
     from ueba_pipeline.evaluation.benchmark import lanl_roc_eval
+    from ueba_pipeline.evaluation.lanl_adapter import load_lanl
 
     generate(str(tmp_path), n_users=200, days=4, seed=11)
     ds = load_lanl(str(tmp_path / "auth.txt"), str(tmp_path / "redteam.txt"))

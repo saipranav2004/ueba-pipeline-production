@@ -22,15 +22,15 @@ them locally and point the `lanl-eval` CLI at them.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from datetime import UTC, datetime, timedelta
 
 from ueba_pipeline.parsing.normalize import NormalizedEvent
 
 # LANL times are integer seconds from an arbitrary epoch (t=1 is the first
 # second). Anchor to a fixed reference so event_time is a real datetime.
-_LANL_EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
+_LANL_EPOCH = datetime(2015, 1, 1, tzinfo=UTC)
 
 # LANL logon_type -> the numeric LogonType the graph track's edge projection
 # reads. Unknown/"?" values default to Network (3), the dominant LANL type and
@@ -49,7 +49,7 @@ def lanl_time(t: str) -> datetime:
     return _LANL_EPOCH + timedelta(seconds=int(t))
 
 
-def _to_event(row: List[str]) -> Optional[NormalizedEvent]:
+def _to_event(row: list[str]) -> NormalizedEvent | None:
     if len(row) < 9:
         return None
     t, su, du, sc, dc, auth_type, logon_type, orientation, result = row[:9]
@@ -82,7 +82,7 @@ def _to_event(row: List[str]) -> Optional[NormalizedEvent]:
     )
 
 
-def iter_lanl_events(auth_path: str, max_rows: Optional[int] = None) -> Iterator[NormalizedEvent]:
+def iter_lanl_events(auth_path: str, max_rows: int | None = None) -> Iterator[NormalizedEvent]:
     """Stream `auth.txt` (or a decompressed prefix of it) as NormalizedEvents."""
     with open(auth_path) as f:
         for i, line in enumerate(f):
@@ -93,9 +93,9 @@ def iter_lanl_events(auth_path: str, max_rows: Optional[int] = None) -> Iterator
                 yield ev
 
 
-def load_redteam_labels(redteam_path: str) -> Set[Tuple[int, str, str, str]]:
+def load_redteam_labels(redteam_path: str) -> set[tuple[int, str, str, str]]:
     """Return the set of (time, user, src_computer, dst_computer) marked malicious."""
-    labels: Set[Tuple[int, str, str, str]] = set()
+    labels: set[tuple[int, str, str, str]] = set()
     with open(redteam_path) as f:
         for line in f:
             parts = line.rstrip("\n").split(",")
@@ -107,11 +107,11 @@ def load_redteam_labels(redteam_path: str) -> Set[Tuple[int, str, str, str]]:
 
 @dataclass
 class LanlDataset:
-    events: List[NormalizedEvent]
-    malicious: Set[Tuple[int, str, str, str]]
+    events: list[NormalizedEvent]
+    malicious: set[tuple[int, str, str, str]]
     # (time, src, dst) index of red-team events, so an auth matches if either its
     # source or destination user is the compromised credential.
-    _by_conn: Dict[Tuple[int, str, str], Set[str]] = field(default_factory=dict)
+    _by_conn: dict[tuple[int, str, str], set[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for t, u, s, d in self.malicious:
@@ -126,7 +126,7 @@ class LanlDataset:
                 or _u(e.fields.get("src_user_name")) in users)
 
 
-def load_lanl(auth_path: str, redteam_path: str, max_rows: Optional[int] = None) -> LanlDataset:
+def load_lanl(auth_path: str, redteam_path: str, max_rows: int | None = None) -> LanlDataset:
     events = list(iter_lanl_events(auth_path, max_rows=max_rows))
     events.sort(key=lambda e: e.event_time)
     return LanlDataset(events=events, malicious=load_redteam_labels(redteam_path))

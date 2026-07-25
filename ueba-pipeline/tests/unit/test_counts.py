@@ -5,6 +5,7 @@ Binomial), and the properties the track relies on -- safe cold start, ranking
 preserved deep in the tail, no degeneracy on sparse counts -- must hold.
 """
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -52,7 +53,7 @@ def test_tail_is_monotone_and_ranks_deep_extremes():
     for c in rng.poisson(3, 100):
         g.observe("svc", c)
     tails = [g.tail("svc", y) for y in (5, 10, 20, 60, 140)]
-    assert all(a > b for a, b in zip(tails, tails[1:]))
+    assert all(a > b for a, b in pairwise(tails))
 
 
 def test_no_degeneracy_on_sparse_counts():

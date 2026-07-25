@@ -7,10 +7,8 @@ which produce plausible-looking numbers rather than an error.
 """
 
 import json
-import pickle
 import sys
-import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +16,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ueba_pipeline.parsing.normalize import normalize_username
 from ueba_pipeline.features.manifest import CapabilityManifest
+from ueba_pipeline.parsing.normalize import normalize_username
 
 
 def test_normalize_username_strips_netbios_prefix():
@@ -159,6 +157,7 @@ def test_roster_projection_matches_normalize_username_key_shape():
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "enterprise_simulator"))
     from core.employees import build_employee_roster, roster_to_peer_group_map
+
     from ueba_pipeline.parsing.normalize import normalize_username
 
     roster = build_employee_roster()
@@ -203,7 +202,7 @@ def test_sysmon_source_user_events_are_attributed_not_dropped():
 
     def eid10(source_user_norm, target_user_norm=None):
         return NormalizedEvent(
-            event_time=datetime.now(timezone.utc), ingest_time=None,
+            event_time=datetime.now(UTC), ingest_time=None,
             channel="Microsoft-Windows-Sysmon/Operational", event_id="10",
             event_type="sysmon_10", group="sysmon_process",
             computer_name="WKS01", outcome=None, keywords=[],
@@ -277,6 +276,7 @@ def test_config_rejects_unknown_keys():
     threshold.percentile via YAML would see no error and no effect.
     """
     from pydantic import ValidationError
+
     from ueba_pipeline.config.schema import WindowConfig
 
     with pytest.raises(ValidationError):
@@ -307,8 +307,8 @@ def test_capability_manifest_groups_match_feature_extractors():
     only claims a group for events it can actually extract fields from, so there
     are no tracked-gap exclusions left.)
     """
-    from ueba_pipeline.parsing.normalize import EVENT_GROUP
     from ueba_pipeline.features.aggregate import _GROUP_EVENT_TYPES, _GROUP_EXTRACTORS
+    from ueba_pipeline.parsing.normalize import EVENT_GROUP
 
     implemented_groups = set(EVENT_GROUP.values())
 
@@ -328,12 +328,13 @@ def test_defender_malware_flag_is_computed_when_available():
     Defender malware-detected event (EID 1116) must produce a nonzero
     f_malware_detected_flag once routed through the real dispatch path,
     not just exist in isolation as a unit-testable function."""
-    from datetime import datetime, timezone
-    from ueba_pipeline.features.aggregate import _GROUP_EXTRACTORS, _GROUP_EVENT_TYPES
+    from datetime import datetime
+
+    from ueba_pipeline.features.aggregate import _GROUP_EVENT_TYPES, _GROUP_EXTRACTORS
     from ueba_pipeline.parsing.normalize import NormalizedEvent
 
     ne = NormalizedEvent(
-        event_time=datetime.now(timezone.utc), ingest_time=None,
+        event_time=datetime.now(UTC), ingest_time=None,
         channel="Microsoft-Windows-Windows Defender/Operational", event_id="1116",
         event_type="defender_1116", group="defender", computer_name="WKS01",
         outcome=None, keywords=[],
@@ -354,17 +355,17 @@ def test_rare_signal_groups_bypass_volume_fraction_gate():
     deployment, which would leave the feature permanently inert despite being
     wired correctly.
     """
-    from ueba_pipeline.features.manifest import build_capability_manifest
     from ueba_pipeline.config.schema import CapabilityConfig
+    from ueba_pipeline.features.manifest import build_capability_manifest
     from ueba_pipeline.parsing.normalize import NormalizedEvent
 
     config = CapabilityConfig(bootstrap_min_events=100)
 
     events = []
     # Bulk of volume: routine auth events, far more than 1 defender event.
-    for i in range(500):
+    for _ in range(500):
         events.append(NormalizedEvent(
-            event_time=datetime.now(timezone.utc), ingest_time=None,
+            event_time=datetime.now(UTC), ingest_time=None,
             channel="Security", event_id="4624", event_type="4624",
             group="auth", computer_name="DC01", outcome="success",
             keywords=[], fields={}, raw_event_data={}, parse_warnings=[],
@@ -372,7 +373,7 @@ def test_rare_signal_groups_bypass_volume_fraction_gate():
     # Exactly one real Defender detection -- 1/501 = 0.2%, and realistic
     # deployments will often see even less than this.
     events.append(NormalizedEvent(
-        event_time=datetime.now(timezone.utc), ingest_time=None,
+        event_time=datetime.now(UTC), ingest_time=None,
         channel="Microsoft-Windows-Windows Defender/Operational",
         event_id="1116", event_type="defender_1116", group="defender",
         computer_name="WKS01", outcome=None, keywords=[],
@@ -393,7 +394,7 @@ def _bulk_events(group, channel, event_id, event_type, n, host="H1"):
     from ueba_pipeline.parsing.normalize import NormalizedEvent
     return [
         NormalizedEvent(
-            event_time=datetime.now(timezone.utc), ingest_time=None,
+            event_time=datetime.now(UTC), ingest_time=None,
             channel=channel, event_id=event_id, event_type=event_type,
             group=group, computer_name=host, outcome=None, keywords=[],
             fields={}, raw_event_data={}, parse_warnings=[],
@@ -544,8 +545,9 @@ def test_source_edge_keys_on_device_not_address():
     the address versus 4.4% when keyed on the device. That is the difference
     between a detector that works on a real network and one that floods.
     """
+    from datetime import datetime
     from types import SimpleNamespace
-    from datetime import datetime, timezone
+
     from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector, AuthGraphConfig
 
     det = AuthGraphAnomalyDetector(config=AuthGraphConfig())
@@ -553,7 +555,7 @@ def test_source_edge_keys_on_device_not_address():
     def logon(ip, ws="WSENG01"):
         return SimpleNamespace(
             event_type="4624",
-            event_time=datetime(2025, 1, 1, 9, tzinfo=timezone.utc),
+            event_time=datetime(2025, 1, 1, 9, tzinfo=UTC),
             computer_name="fs01",
             fields={"target_user_name": "alice", "src_ip": ip,
                     "workstation": ws, "logon_type": 3},

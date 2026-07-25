@@ -34,8 +34,7 @@ hides.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -52,10 +51,10 @@ class EmpiricalPValue:
     """
 
     grid_size: int = DEFAULT_GRID
-    _grid: Optional[np.ndarray] = None
+    _grid: np.ndarray | None = None
     _n: int = 0
 
-    def fit(self, benign_scores: np.ndarray) -> "EmpiricalPValue":
+    def fit(self, benign_scores: np.ndarray) -> EmpiricalPValue:
         x = np.asarray(benign_scores, dtype=np.float64).ravel()
         x = x[np.isfinite(x)]
         if x.size == 0:

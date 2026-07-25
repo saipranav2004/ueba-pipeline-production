@@ -29,12 +29,10 @@ References:
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional
 
 import networkx as nx
 
 from ueba_pipeline.graph.identity_graph import IdentityGraph
-
 
 # Distinct, colour-blind-friendly palette per node type. Kept deliberately
 # small and legible rather than "pretty"; this is a review tool.
@@ -49,8 +47,8 @@ _TYPE_COLORS = {
 
 
 def _shortest_path_to_tier0(
-    graph: nx.Graph, tier0_nodes: List[str]
-) -> Dict[str, List[str]]:
+    graph: nx.Graph, tier0_nodes: list[str]
+) -> dict[str, list[str]]:
     """For every node, the node list of its shortest path to the nearest
     Tier-0 asset (empty if unreachable). Uses the undirected projection, the
     same basis compute_risk_scores uses for hops-to-Tier-0, so the drawn path
@@ -74,9 +72,9 @@ def _shortest_path_to_tier0(
 
     # BFS predecessor tree from the super-source.
     preds = nx.bfs_predecessors(undirected, SUPER)
-    parent = {child: p for child, p in preds}
+    parent = dict(preds)
 
-    paths: Dict[str, List[str]] = {}
+    paths: dict[str, list[str]] = {}
     for node in graph:
         if node not in parent and node not in present:
             paths[node] = []       # unreachable from any Tier-0

@@ -12,8 +12,11 @@ import numpy as np
 import pytest
 
 from ueba_pipeline.evaluation.model_benchmark import (
-    WindowDataset, attack_family_folds, entity_and_time_disjoint_folds,
-    entity_disjoint_folds, temporal_folds,
+    WindowDataset,
+    attack_family_folds,
+    entity_and_time_disjoint_folds,
+    entity_disjoint_folds,
+    temporal_folds,
 )
 
 

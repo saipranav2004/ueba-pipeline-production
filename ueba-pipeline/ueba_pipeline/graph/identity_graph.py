@@ -65,9 +65,7 @@ NetworkX rather than Neo4j.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
 # NetworkX is a heavy dependency — guard the import and provide a clear
 # error message rather than a cryptic ImportError at runtime.
@@ -77,7 +75,6 @@ except ImportError:
     nx = None  # type: ignore[assignment]
 
 from ueba_pipeline.config.schema import PipelineConfig
-
 
 # Node type constants
 NODE_USER = "user"
@@ -125,8 +122,8 @@ class GraphRiskScore:
     degree_centrality: float = 0.0
     betweenness_centrality: float = 0.0
     pagerank: float = 0.0
-    hops_to_tier0: Optional[int] = None  # None = unreachable
-    community_id: Optional[int] = None
+    hops_to_tier0: int | None = None  # None = unreachable
+    community_id: int | None = None
     composite_risk: float = 0.0  # 0-1 normalized
 
     def to_dict(self) -> dict:
@@ -153,8 +150,8 @@ class GraphRiskReport:
     betweenness_pivots: int = 0
     mean_risk: float = 0.0
     max_risk: float = 0.0
-    high_risk_entities: List[GraphRiskScore] = field(default_factory=list)
-    entity_scores: Dict[str, GraphRiskScore] = field(default_factory=dict)
+    high_risk_entities: list[GraphRiskScore] = field(default_factory=list)
+    entity_scores: dict[str, GraphRiskScore] = field(default_factory=dict)
 
 
 class IdentityGraph:
@@ -172,7 +169,7 @@ class IdentityGraph:
     risk weighting and visual grouping.
     """
 
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    def __init__(self, config: PipelineConfig | None = None):
         if nx is None:
             raise ImportError(
                 "NetworkX is required for graph-based structural risk scoring. "
@@ -182,8 +179,8 @@ class IdentityGraph:
             )
         self.config = config
         self.graph = nx.DiGraph()
-        self._tier0_nodes: Set[str] = set()
-        self._node_types: Dict[str, str] = {}
+        self._tier0_nodes: set[str] = set()
+        self._node_types: dict[str, str] = {}
 
     def add_node(self, node_id: str, node_type: str, **attrs) -> None:
         """Add an entity node to the graph. Nodes are classified Tier-0 either
@@ -199,11 +196,11 @@ class IdentityGraph:
         """Add a relationship edge. source acts on target (e.g. user → group = member_of)."""
         self.graph.add_edge(source, target, edge_type=edge_type, **attrs)
 
-    def load_from_roster(self, roster: Dict[str, str],
-                         admin_accounts: Optional[List[dict]] = None,
-                         service_accounts: Optional[List[dict]] = None,
-                         servers: Optional[List[dict]] = None,
-                         domain_controllers: Optional[List[dict]] = None) -> None:
+    def load_from_roster(self, roster: dict[str, str],
+                         admin_accounts: list[dict] | None = None,
+                         service_accounts: list[dict] | None = None,
+                         servers: list[dict] | None = None,
+                         domain_controllers: list[dict] | None = None) -> None:
         """Load an identity/access graph from roster data.
 
         The graph models the AD Administrative Tier Model (Microsoft, "Securing
@@ -331,7 +328,7 @@ class IdentityGraph:
         try:
             degree_cent = nx.degree_centrality(undirected)
         except Exception:
-            degree_cent = {n: 0.0 for n in self.graph}
+            degree_cent = dict.fromkeys(self.graph, 0.0)
 
         # 2. Betweenness centrality — the graph-analytics scale bottleneck.
         # Exact Brandes betweenness is O(V*E): ~0.15s at 300 nodes but ~227s at
@@ -357,7 +354,7 @@ class IdentityGraph:
                 between_cent = nx.betweenness_centrality(undirected, normalized=True)
                 report.betweenness_approximate = False
         except Exception:
-            between_cent = {n: 0.0 for n in self.graph}
+            between_cent = dict.fromkeys(self.graph, 0.0)
 
         # 3. PageRank — treats the graph as a directed influence network
         try:
@@ -373,7 +370,7 @@ class IdentityGraph:
         # frontier with all Tier-0 nodes at once and let it expand outward, so
         # every node's distance to its NEAREST Tier-0 asset is found in one
         # O(V+E) pass. Identical results (nearest-Tier-0 hop count), linear cost.
-        tier0_distances: Dict[str, Optional[int]] = {n: None for n in self.graph}
+        tier0_distances: dict[str, int | None] = dict.fromkeys(self.graph)
         if self._tier0_nodes:
             present_t0 = [t for t in self._tier0_nodes if t in undirected]
             if present_t0:
@@ -392,7 +389,7 @@ class IdentityGraph:
         # partitions ~9x faster (measured 3.9s vs 36s at 10k) and is the modern
         # production standard. Use Louvain when available (NetworkX >= 3.0),
         # fall back to greedy modularity, then to "no communities".
-        communities: Dict[str, int] = {}
+        communities: dict[str, int] = {}
         try:
             try:
                 from networkx.algorithms.community import louvain_communities
@@ -410,7 +407,7 @@ class IdentityGraph:
         report.n_tier0_assets = len(self._tier0_nodes)
 
         # Compute composite risk score for each entity
-        scores: Dict[str, GraphRiskScore] = {}
+        scores: dict[str, GraphRiskScore] = {}
         max_pagerank = max(pagerank.values()) if pagerank else 1.0
         max_pagerank = max(max_pagerank, 1e-12)
 
@@ -478,18 +475,18 @@ class IdentityGraph:
 
         return report
 
-    def get_user_risk_score(self, user: str) -> Optional[GraphRiskScore]:
+    def get_user_risk_score(self, user: str) -> GraphRiskScore | None:
         """Get the graph risk score for a specific user."""
         report = self.compute_risk_scores()
         return report.entity_scores.get(user)
 
 def build_identity_graph_from_roster(
     roster_path: str,
-    config: Optional[PipelineConfig] = None,
-    admin_accounts: Optional[List[dict]] = None,
-    service_accounts: Optional[List[dict]] = None,
-    servers: Optional[List[dict]] = None,
-    domain_controllers: Optional[List[dict]] = None,
+    config: PipelineConfig | None = None,
+    admin_accounts: list[dict] | None = None,
+    service_accounts: list[dict] | None = None,
+    servers: list[dict] | None = None,
+    domain_controllers: list[dict] | None = None,
 ) -> IdentityGraph:
     """Build an IdentityGraph from roster data plus optional directory metadata.
 

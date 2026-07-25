@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -71,7 +70,7 @@ class CapabilityConfig(_StrictModel):
                     "decommissioned pilot install. Does NOT apply to "
                     "presence_gated_groups below.",
     )
-    presence_gated_groups: List[str] = Field(
+    presence_gated_groups: list[str] = Field(
         default_factory=lambda: [
             "defender", "privilege_ad", "account_lifecycle",
         ],
@@ -111,8 +110,8 @@ class SimulatorConfig(_StrictModel):
     """External override surface for the simulator's department-level
     behavioral parameters and enabled log sources."""
 
-    departments: Dict[str, DepartmentBehaviorConfig] = Field(default_factory=dict)
-    enabled_log_sources: List[str] = Field(
+    departments: dict[str, DepartmentBehaviorConfig] = Field(default_factory=dict)
+    enabled_log_sources: list[str] = Field(
         default_factory=lambda: [
             "security", "sysmon", "dns", "powershell", "task_scheduler",
             "wmi", "defender",
@@ -121,7 +120,7 @@ class SimulatorConfig(_StrictModel):
 
     @field_validator("enabled_log_sources")
     @classmethod
-    def _valid_sources(cls, v: List[str]) -> List[str]:
+    def _valid_sources(cls, v: list[str]) -> list[str]:
         allowed = {"security", "sysmon", "dns", "powershell", "task_scheduler",
                    "wmi", "defender"}
         bad = set(v) - allowed
@@ -142,7 +141,7 @@ class SecurityConfig(_StrictModel):
     # substitute the baseline the detector trusts. It must never reach a log,
     # error tracker, repr, or serialized support bundle. Read via
     # .get_secret_value().
-    model_signing_key: Optional[SecretStr] = Field(
+    model_signing_key: SecretStr | None = Field(
         default=None, repr=False,
         description="HMAC key for signing/verifying persisted model bundles. "
                     "Must be set via UEBA__SECURITY__MODEL_SIGNING_KEY (or "
@@ -199,8 +198,9 @@ class IdentityGraphConfig(_StrictModel):
                     "graphs. Higher = more accurate, slower.",
     )
     @model_validator(mode="after")
-    def _weights_plausible(self) -> "IdentityGraphConfig":
-        total = self.tier0_risk_weight + self.betweenness_weight + self.pagerank_weight + self.degree_weight
+    def _weights_plausible(self) -> IdentityGraphConfig:
+        total = (self.tier0_risk_weight + self.betweenness_weight
+                 + self.pagerank_weight + self.degree_weight)
         if abs(total - 1.0) > 1e-6:
             raise ValueError(f"graph risk weights must sum to 1.0, got {total}")
         return self
@@ -257,7 +257,7 @@ def _apply_env_overrides(raw: dict) -> dict:
     return raw
 
 
-def load_config(path: Optional[str | Path] = None) -> PipelineConfig:
+def load_config(path: str | Path | None = None) -> PipelineConfig:
     """
     Loads config from YAML (if provided) + environment overrides, validates,
     and fails fast with a clear pydantic ValidationError on bad input rather

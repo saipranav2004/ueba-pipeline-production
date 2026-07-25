@@ -22,8 +22,8 @@ import argparse
 import sys
 
 from ueba_pipeline.config import load_config
-from ueba_pipeline.ingestion import FileEventSource
 from ueba_pipeline.engine import BehavioralEngine, EngineConfig, is_graph_event
+from ueba_pipeline.ingestion import FileEventSource
 
 
 def _read_events(data_dir: str):
@@ -37,11 +37,12 @@ def cmd_train(args: argparse.Namespace) -> None:
     events = _read_events(args.data_dir)
     contaminated = None
     if args.exclude_attack_labels:
-        from ueba_pipeline.engine import _event_key
         import json
         from datetime import datetime, timedelta
 
-        labels = [json.loads(l) for l in open(args.exclude_attack_labels)]
+        from ueba_pipeline.engine import _event_key
+
+        labels = [json.loads(line) for line in open(args.exclude_attack_labels)]
         spans = []
         for a in labels:
             s = datetime.fromisoformat(a["start_time"].replace("Z", "+00:00"))
@@ -55,7 +56,8 @@ def cmd_train(args: argparse.Namespace) -> None:
     engine = BehavioralEngine(config=EngineConfig(window_hours=cfg.window.feature_window_hours))
     engine.fit(events, config_capability=cfg.capability, contaminated=contaminated)
     engine.save(args.model_dir)
-    print(f"[train] fit on {len(events)} events -> signed bundle at {args.model_dir}", file=sys.stderr)
+    print(f"[train] fit on {len(events)} events -> signed bundle at {args.model_dir}",
+          file=sys.stderr)
     # Per-view benign novelty rate: a view whose benign edges are routinely novel
     # cannot separate a first contact from an attack, however it is calibrated.
     print(f"  {'view':14s} {'edges':>8s} {'benign novelty':>15s}", file=sys.stderr)
@@ -183,7 +185,8 @@ def cmd_deviation_scan(args: argparse.Namespace) -> None:
     to by construction. See docs/identities.md.
     """
     from ueba_pipeline.identity.deviation import (
-        insider_volume_queue, nhi_schedule_queue,
+        insider_volume_queue,
+        nhi_schedule_queue,
     )
 
     events = _read_events(args.data_dir)
@@ -222,8 +225,8 @@ def cmd_lanl_eval(args: argparse.Namespace) -> None:
     """Per-authentication ROC on the LANL 2015 auth stream (or a synthetic
     LANL-format fixture). Validates the production graph detector against the
     canonical public lateral-movement benchmark."""
-    from ueba_pipeline.evaluation.lanl_adapter import load_lanl
     from ueba_pipeline.evaluation.benchmark import lanl_roc_eval
+    from ueba_pipeline.evaluation.lanl_adapter import load_lanl
 
     ds = load_lanl(args.auth, args.redteam, max_rows=args.max_rows)
     if not ds.malicious:
@@ -264,8 +267,12 @@ def cmd_model_benchmark(args: argparse.Namespace) -> None:
     leakage-resistant split protocols, with the shipped detector as a reference
     column. See evaluation/model_benchmark.py for the protocol design."""
     from ueba_pipeline.evaluation.model_benchmark import (
-        aggregate, build_window_dataset, evaluate_graph_reference,
-        graph_reference_scores, render, run_protocol,
+        aggregate,
+        build_window_dataset,
+        evaluate_graph_reference,
+        graph_reference_scores,
+        render,
+        run_protocol,
     )
 
     protocols = args.protocols.split(",") if args.protocols else [
@@ -288,6 +295,7 @@ def cmd_model_benchmark(args: argparse.Namespace) -> None:
 
 def cmd_graph_viz(args: argparse.Namespace) -> None:
     import json as _json
+
     from ueba_pipeline.graph.identity_graph import build_identity_graph_from_roster
     from ueba_pipeline.graph.visualize import write_html
 
@@ -309,7 +317,7 @@ def cmd_graph_viz(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(prog="ueba", description="Two-track behavioral ITDR engine")
+    p = argparse.ArgumentParser(prog="ueba", description="Behavioural ITDR engine: relational, execution, NHI and insider queues")
     sub = p.add_subparsers(dest="command", required=True)
 
     p_train = sub.add_parser("train", help="Fit the two-track engine and write a signed bundle")
@@ -327,18 +335,22 @@ def main() -> None:
                               "per day are alerted (default: the engine's fitted value)")
     p_score.set_defaults(func=cmd_score)
 
-    p_stream = sub.add_parser("score-stream", help="Score events online, adapting the baseline as it goes")
+    p_stream = sub.add_parser(
+        "score-stream", help="Score events online, adapting the baseline as it goes")
     p_stream.add_argument("--data-dir", required=True)
     p_stream.add_argument("--model-dir", default="artifacts/models/engine")
     p_stream.set_defaults(func=cmd_score_stream)
 
-    p_drift = sub.add_parser("drift-check", help="Compare a live window's capabilities against the trained bundle")
+    p_drift = sub.add_parser(
+        "drift-check",
+        help="Compare a live window's capabilities against the trained bundle")
     p_drift.add_argument("--data-dir", required=True)
     p_drift.add_argument("--model-dir", default="artifacts/models/engine")
     p_drift.set_defaults(func=cmd_drift)
 
     p_ci = sub.add_parser("classify-identities",
-                          help="Type each identity as automated (NHI) or human from activity timing")
+                          help="Type each identity as automated (NHI) or human "
+                               "from activity timing")
     p_ci.add_argument("--data-dir", required=True)
     p_ci.add_argument("--min-events", type=int, default=12,
                       help="minimum events before an identity is typed (else 'unknown')")
@@ -360,7 +372,8 @@ def main() -> None:
     p_dev.add_argument("--limit", type=int, default=None, help="print only the top N rows")
     p_dev.set_defaults(func=cmd_deviation_scan)
 
-    p_lanl = sub.add_parser("lanl-eval", help="Per-auth ROC on LANL 2015 (or a LANL-format fixture)")
+    p_lanl = sub.add_parser(
+        "lanl-eval", help="Per-auth ROC on LANL 2015 (or a LANL-format fixture)")
     p_lanl.add_argument("--auth", required=True, help="path to auth.txt")
     p_lanl.add_argument("--redteam", required=True, help="path to redteam.txt")
     p_lanl.add_argument("--train-fraction", type=float, default=0.5)

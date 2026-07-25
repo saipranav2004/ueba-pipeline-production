@@ -6,9 +6,10 @@ into a rule engine one convenient flag at a time.
 """
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
-from ueba_pipeline.config.schema import CapabilityConfig
 from ueba_pipeline.features import contract as C
 from ueba_pipeline.features.aggregate import _GROUP_EXTRACTORS, feature_order_for_manifest
 from ueba_pipeline.features.manifest import CapabilityManifest
@@ -90,7 +91,7 @@ def test_validate_rejects_an_unclassifiable_feature(full_manifest, monkeypatch):
     undefined eligibility, and must fail loudly rather than default to eligible."""
     monkeypatch.setattr(
         C, "feature_order_for_manifest",
-        lambda m: list(feature_order_for_manifest(m)) + ["f_unowned_statistic"],
+        lambda m: [*feature_order_for_manifest(m), "f_unowned_statistic"],
     )
     with pytest.raises(ValueError, match="not attributable to an extractor group"):
         C.validate(full_manifest)
@@ -105,12 +106,12 @@ def test_observed_windows_match_full_feature_vector_keys():
     every key: if attribution drifted between them, every correction would shift
     silently.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from ueba_pipeline.features.aggregate import build_user_windows, observed_entity_windows
     from ueba_pipeline.parsing.normalize import NormalizedEvent
 
-    base = datetime(2025, 5, 1, 8, 0, tzinfo=timezone.utc)
+    base = datetime(2025, 5, 1, 8, 0, tzinfo=UTC)
 
     def event(event_type, minute, group, **fields):
         return NormalizedEvent(

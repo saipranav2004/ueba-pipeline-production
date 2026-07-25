@@ -40,7 +40,6 @@ import hmac
 import json
 import os
 from pathlib import Path
-from typing import Dict, Tuple
 
 import numpy as np
 
@@ -65,7 +64,7 @@ def _digest(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def _bundle_signature(files: Dict[str, bytes]) -> bytes:
+def _bundle_signature(files: dict[str, bytes]) -> bytes:
     """HMAC over the sorted per-file digests, so any file change breaks the seal."""
     payload = "\n".join(f"{name}:{_digest(blob)}" for name, blob in sorted(files.items()))
     return hmac.new(signing_key(), payload.encode(), hashlib.sha256).digest()
@@ -89,7 +88,7 @@ def pvalue_from_state(state: dict):
 
 
 # ── auth-graph detector ─────────────────────────────────────────────────────
-def _edge_key(edge: Tuple[str, str]) -> str:
+def _edge_key(edge: tuple[str, str]) -> str:
     # Edges are (src, dst) string tuples. JSON has no tuple key, so they are
     # joined on a delimiter that cannot occur in a normalised identity (all
     # inputs pass through _norm, which lowercases and strips but never inserts
@@ -97,7 +96,7 @@ def _edge_key(edge: Tuple[str, str]) -> str:
     return f"{edge[0]}\x1f{edge[1]}"
 
 
-def _edge_from_key(key: str) -> Tuple[str, str]:
+def _edge_from_key(key: str) -> tuple[str, str]:
     src, dst = key.split("\x1f", 1)
     return (src, dst)
 
@@ -127,7 +126,8 @@ def graph_from_state(state: dict):
     from collections import defaultdict
 
     from ueba_pipeline.graph.auth_graph_anomaly import (
-        AuthGraphAnomalyDetector, AuthGraphConfig,
+        AuthGraphAnomalyDetector,
+        AuthGraphConfig,
     )
 
     cfg = AuthGraphConfig(**state["config"])
@@ -156,14 +156,14 @@ def _int_keyed(d: dict) -> dict:
     return {int(k): float(v) for k, v in d.items()}
 
 
-def track_to_state(track, name: str) -> Tuple[dict, Dict[str, np.ndarray]]:
+def track_to_state(track, name: str) -> tuple[dict, dict[str, np.ndarray]]:
     """The persistable content of one BehaviouralDeviationTrack.
 
     ``name`` keys the null arrays deterministically (``track_<name>_<signal>``), so
     the same engine always serialises to the same bytes -- which keeps the bundle
     signature reproducible and diffable.
     """
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     nulls = {}
     for signal, pv in track._nulls.items():
         st = pvalue_to_state(pv)
@@ -201,7 +201,7 @@ def track_to_state(track, name: str) -> Tuple[dict, Dict[str, np.ndarray]]:
     return state, arrays
 
 
-def track_from_state(state: dict, arrays: Dict[str, np.ndarray]):
+def track_from_state(state: dict, arrays: dict[str, np.ndarray]):
     from ueba_pipeline.identity.deviation import BehaviouralDeviationTrack
     from ueba_pipeline.models.counts import GammaPoissonCounts
 
@@ -252,8 +252,8 @@ def manifest_from_state(state: dict):
 
 
 # ── whole-engine bundle ─────────────────────────────────────────────────────
-def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
-    arrays: Dict[str, np.ndarray] = {}
+def engine_to_bundle(engine) -> tuple[dict, dict[str, np.ndarray]]:
+    arrays: dict[str, np.ndarray] = {}
 
     graph_nulls = {}
     for view, pv in engine._graph_nulls.items():
@@ -308,8 +308,8 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
     return state, arrays
 
 
-def engine_from_bundle(state: dict, arrays: Dict[str, np.ndarray]):
-    from ueba_pipeline.engine import EngineConfig, BehavioralEngine
+def engine_from_bundle(state: dict, arrays: dict[str, np.ndarray]):
+    from ueba_pipeline.engine import BehavioralEngine, EngineConfig
 
     version = state.get("serialization_version")
     if version != SERIALIZATION_VERSION:
@@ -371,7 +371,7 @@ def save_engine(engine, directory: str) -> None:
 
     state, arrays = engine_to_bundle(engine)
 
-    files: Dict[str, bytes] = {}
+    files: dict[str, bytes] = {}
     files[_STATE_NAME] = json.dumps(
         state, sort_keys=True, cls=_NumpyJSONEncoder).encode("utf-8")
     for name, array in sorted(arrays.items()):
@@ -396,7 +396,7 @@ def load_engine(directory: str):
     import io
 
     path = Path(directory)
-    files: Dict[str, bytes] = {}
+    files: dict[str, bytes] = {}
     for file in sorted(path.glob("*")):
         if file.name == _SIG_NAME:
             continue
@@ -408,7 +408,7 @@ def load_engine(directory: str):
         raise ValueError("engine bundle signature verification failed")
 
     state = json.loads(files[_STATE_NAME].decode("utf-8"))
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for name, blob in files.items():
         if name.endswith(".npy"):
             # allow_pickle=False is the load-side guarantee: a .npy that encodes a

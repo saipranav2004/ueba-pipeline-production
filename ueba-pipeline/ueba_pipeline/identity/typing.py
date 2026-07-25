@@ -52,9 +52,9 @@ component here is held to (docs/graph.md Part 2).
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -217,7 +217,7 @@ def classify_identity(
                            g.p_value, g.g, period_h, weekend, tod, reason)
 
 
-def classify_identities(events, min_events: int = DEFAULT_MIN_EVENTS) -> Dict[str, IdentityProfile]:
+def classify_identities(events, min_events: int = DEFAULT_MIN_EVENTS) -> dict[str, IdentityProfile]:
     """Type every identity in a normalized event stream.
 
     Events are attributed to accounts with the same per-family logic the feature
@@ -226,7 +226,7 @@ def classify_identities(events, min_events: int = DEFAULT_MIN_EVENTS) -> Dict[st
     """
     from ueba_pipeline.features.aggregate import _user_key
 
-    by_entity: Dict[str, List[datetime]] = {}
+    by_entity: dict[str, list[datetime]] = {}
     for e in events:
         if getattr(e, "event_time", None) is None:
             continue

@@ -23,10 +23,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ueba_pipeline.evaluation.otrf_adapter import (
-    OTRF_DATASETS, download_otrf_dataset, read_otrf_events,
+    OTRF_DATASETS,
+    download_otrf_dataset,
+    read_otrf_events,
 )
 from ueba_pipeline.graph.auth_graph_anomaly import (
-    AuthGraphAnomalyDetector, AuthGraphConfig,
+    AuthGraphAnomalyDetector,
+    AuthGraphConfig,
 )
 
 

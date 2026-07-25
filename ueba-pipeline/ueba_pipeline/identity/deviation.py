@@ -83,9 +83,10 @@ discipline the relationship views are held to.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+from datetime import datetime
+from itertools import pairwise
 
 import numpy as np
 
@@ -141,9 +142,9 @@ def _cadence_bin(gap_minutes: float) -> int:
     return len(CADENCE_BIN_EDGES)
 
 
-def _bursts(times: Sequence[datetime]) -> List[datetime]:
+def _bursts(times: Sequence[datetime]) -> list[datetime]:
     """Start time of each burst: a gap > BURST_GAP_MINUTES opens a new one."""
-    out: List[datetime] = []
+    out: list[datetime] = []
     prev = None
     for t in sorted(times):
         if prev is None or (t - prev).total_seconds() / 60.0 > BURST_GAP_MINUTES:
@@ -164,7 +165,7 @@ class TrackAlert:
 
     entity: str
     p_value: float                  # Sidak-corrected over the windows it was tested in
-    top_hour: Optional[datetime]    # the window driving the score
+    top_hour: datetime | None    # the window driving the score
     surprise: float                 # raw surprise, in nats, of that window
     signal: str                     # which signal drove it -- analyst provenance
     n_windows: int
@@ -182,29 +183,29 @@ class BehaviouralDeviationTrack:
 
     alpha: float = DEFAULT_ALPHA
     null_calibration_fraction: float = DEFAULT_NULL_FRACTION
-    enabled_signals: FrozenSet[str] = ALL_SIGNALS
+    enabled_signals: frozenset[str] = ALL_SIGNALS
     min_schedule_share: float = MIN_SCHEDULE_SHARE
     min_baseline_events: int = MIN_BASELINE_EVENTS
     # Identities admitted to the schedule signals (hour/dow), measured at fit time.
     covered: set = field(default_factory=set)
-    _hour_counts: Dict[str, Dict[int, float]] = field(default_factory=dict)
-    _dow_counts: Dict[str, Dict[int, float]] = field(default_factory=dict)
-    _entity_totals: Dict[str, float] = field(default_factory=dict)
-    _hour_marginal: Dict[int, float] = field(default_factory=dict)
-    _dow_marginal: Dict[int, float] = field(default_factory=dict)
+    _hour_counts: dict[str, dict[int, float]] = field(default_factory=dict)
+    _dow_counts: dict[str, dict[int, float]] = field(default_factory=dict)
+    _entity_totals: dict[str, float] = field(default_factory=dict)
+    _hour_marginal: dict[int, float] = field(default_factory=dict)
+    _dow_marginal: dict[int, float] = field(default_factory=dict)
     _total: float = 0.0
     _counts: GammaPoissonCounts = field(default_factory=GammaPoissonCounts)
     # Cadence: per-entity distribution over between-burst gap bins.
-    _cadence_counts: Dict[str, Dict[int, float]] = field(default_factory=dict)
-    _cadence_totals: Dict[str, float] = field(default_factory=dict)
-    _cadence_marginal: Dict[int, float] = field(default_factory=dict)
+    _cadence_counts: dict[str, dict[int, float]] = field(default_factory=dict)
+    _cadence_totals: dict[str, float] = field(default_factory=dict)
+    _cadence_marginal: dict[int, float] = field(default_factory=dict)
     _cadence_total: float = 0.0
     cadence_covered: set = field(default_factory=set)
-    _nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
+    _nulls: dict[str, EmpiricalPValue] = field(default_factory=dict)
     _kernel: np.ndarray = field(default_factory=_circular_kernel)
 
     # -- training ---------------------------------------------------------
-    def fit(self, events: Sequence) -> "BehaviouralDeviationTrack":
+    def fit(self, events: Sequence) -> BehaviouralDeviationTrack:
         """Admit identities, learn their baselines, freeze one null per signal.
 
         The baseline is learnt from the earlier part of the training period and
@@ -230,7 +231,7 @@ class BehaviouralDeviationTrack:
             self._counts.observe(entity, count)
 
         # Per-signal nulls, each measured on the held-out slice only.
-        by_signal: Dict[str, List[float]] = {}
+        by_signal: dict[str, list[float]] = {}
         calib_gaps = self._window_gaps(calib)
         for (entity, window), count in sorted(self._windows(calib).items()):
             for signal, s in self._window_surprises(
@@ -251,14 +252,13 @@ class BehaviouralDeviationTrack:
             self._counts.observe(entity, count)
         return self
 
-    def _learn_cadence(self, rows: Sequence[Tuple[str, datetime]]) -> None:
+    def _learn_cadence(self, rows: Sequence[tuple[str, datetime]]) -> None:
         """Fold between-burst gaps into each entity's cadence baseline."""
-        per: Dict[str, List[datetime]] = {}
+        per: dict[str, list[datetime]] = {}
         for entity, when in rows:
             per.setdefault(entity, []).append(when)
         for entity, times in per.items():
-            starts = _bursts(times)
-            for a, b in zip(starts, starts[1:]):
+            for a, b in pairwise(_bursts(times)):
                 idx = _cadence_bin((b - a).total_seconds() / 60.0)
                 self._cadence_counts.setdefault(entity, {})[idx] = \
                     self._cadence_counts.setdefault(entity, {}).get(idx, 0.0) + 1.0
@@ -269,19 +269,18 @@ class BehaviouralDeviationTrack:
                 self.cadence_covered.add(entity)
 
     @staticmethod
-    def _window_gaps(rows: Sequence[Tuple[str, datetime]]) -> Dict[Tuple[str, datetime], float]:
+    def _window_gaps(rows: Sequence[tuple[str, datetime]]) -> dict[tuple[str, datetime], float]:
         """Gap, in minutes, that preceded the burst opening in each (entity, window).
 
         A window with no new burst (activity continuing from the previous one)
         carries no cadence evidence and is simply absent from the map.
         """
-        per: Dict[str, List[datetime]] = {}
+        per: dict[str, list[datetime]] = {}
         for entity, when in rows:
             per.setdefault(entity, []).append(when)
-        out: Dict[Tuple[str, datetime], float] = {}
+        out: dict[tuple[str, datetime], float] = {}
         for entity, times in per.items():
-            starts = _bursts(times)
-            for a, b in zip(starts, starts[1:]):
+            for a, b in pairwise(_bursts(times)):
                 key = (entity, b.replace(minute=0, second=0, microsecond=0))
                 gap = (b - a).total_seconds() / 60.0
                 # Keep the SHORTEST gap in the window: a burst arriving far sooner
@@ -300,9 +299,9 @@ class BehaviouralDeviationTrack:
         p = (c + self.alpha * pi) / (n + self.alpha)
         return -math.log(max(min(p, 1.0), 1e-12))
 
-    def _admit(self, rows: Sequence[Tuple[str, datetime]]) -> set:
+    def _admit(self, rows: Sequence[tuple[str, datetime]]) -> set:
         """Identities whose activity is concentrated enough for the schedule signals."""
-        hours: Dict[str, List[int]] = {}
+        hours: dict[str, list[int]] = {}
         for entity, when in rows:
             hours.setdefault(entity, []).append(when.hour)
         admitted = set()
@@ -316,20 +315,20 @@ class BehaviouralDeviationTrack:
         return admitted
 
     @staticmethod
-    def _windows(rows: Sequence[Tuple[str, datetime]]) -> Dict[Tuple[str, datetime], int]:
+    def _windows(rows: Sequence[tuple[str, datetime]]) -> dict[tuple[str, datetime], int]:
         """Event counts per (entity, hour-window)."""
-        out: Dict[Tuple[str, datetime], int] = {}
+        out: dict[tuple[str, datetime], int] = {}
         for entity, when in rows:
             key = (entity, when.replace(minute=0, second=0, microsecond=0))
             out[key] = out.get(key, 0) + 1
         return out
 
     @staticmethod
-    def _rows(events: Sequence) -> List[Tuple[str, datetime]]:
+    def _rows(events: Sequence) -> list[tuple[str, datetime]]:
         """Time-ordered ``(entity, timestamp)`` for every attributable event."""
         from ueba_pipeline.features.aggregate import _user_key
 
-        out: List[Tuple[str, datetime]] = []
+        out: list[tuple[str, datetime]] = []
         for e in events:
             if getattr(e, "event_time", None) is None:
                 continue
@@ -351,7 +350,7 @@ class BehaviouralDeviationTrack:
         self._total += 1.0
 
     # -- per-signal surprise ----------------------------------------------
-    def _smoothed(self, counts: Dict[int, float], hour: int) -> float:
+    def _smoothed(self, counts: dict[int, float], hour: int) -> float:
         """Circularly smoothed hour count: neighbours lend mass by clock distance."""
         w = self._kernel
         total = 0.0
@@ -380,9 +379,9 @@ class BehaviouralDeviationTrack:
         return -math.log(max(min(p, 1.0), 1e-12))
 
     def _window_surprises(self, entity: str, window: datetime, count: int,
-                          gap_minutes: Optional[float] = None) -> List[Tuple[str, float]]:
+                          gap_minutes: float | None = None) -> list[tuple[str, float]]:
         """Every enabled signal that can speak about this (entity, window)."""
-        out: List[Tuple[str, float]] = []
+        out: list[tuple[str, float]] = []
         if ("cadence" in self.enabled_signals and gap_minutes is not None
                 and entity in self.cadence_covered):
             out.append(("cadence", self._cadence_surprise(entity, gap_minutes)))
@@ -396,7 +395,7 @@ class BehaviouralDeviationTrack:
         return out
 
     # -- scoring (PURE) ---------------------------------------------------
-    def score(self, events: Sequence, budget_per_day: float = 1.0) -> List[TrackAlert]:
+    def score(self, events: Sequence, budget_per_day: float = 1.0) -> list[TrackAlert]:
         """Rank identities by their most deviant window.
 
         Returns every scored identity, ordered by significance, with the top
@@ -410,7 +409,7 @@ class BehaviouralDeviationTrack:
             return []
 
         gaps = self._window_gaps(rows)
-        best: Dict[str, Tuple[float, datetime, float, str]] = {}
+        best: dict[str, tuple[float, datetime, float, str]] = {}
         for (entity, window), count in self._windows(rows).items():
             scored = []
             for signal, s in self._window_surprises(
@@ -431,7 +430,7 @@ class BehaviouralDeviationTrack:
             if prev is None or (p, -s_at_min) < (prev[0], -prev[2]):
                 best[entity] = (p, window, s_at_min, signal)
 
-        counted: Dict[str, int] = {}
+        counted: dict[str, int] = {}
         for entity, _ in self._windows(rows):
             counted[entity] = counted.get(entity, 0) + 1
 
@@ -443,7 +442,7 @@ class BehaviouralDeviationTrack:
         ]
         alerts.sort(key=lambda a: (a.p_value, -a.surprise))
         span = (rows[-1][1] - rows[0][1]).total_seconds() / 86400.0
-        k = int(round(budget_per_day * max(span, 1.0)))
+        k = round(budget_per_day * max(span, 1.0))
         for a in alerts[:max(k, 0)]:
             a.alerted = True
         return alerts

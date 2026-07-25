@@ -102,7 +102,7 @@ def main() -> None:
             results.append(det)
             marker = "  <- default" if _is_default(name, value) else ""
             shown = "no cap" if value == 1e9 else value
-            print(f"{name:28}{str(shown):>12}{det:>5}/{tot:<6}{fp:>9.2f}{marker}",
+            print(f"{name:28}{shown!s:>12}{det:>5}/{tot:<6}{fp:>9.2f}{marker}",
                   flush=True)
         span = max(results) - min(results)
         print(f"{'':28}{'spread':>12}{span:>5} detections across the range\n", flush=True)

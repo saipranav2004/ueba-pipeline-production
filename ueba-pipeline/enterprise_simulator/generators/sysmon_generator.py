@@ -19,20 +19,27 @@ Event IDs covered:
 """
 
 from __future__ import annotations
-import random
-import hashlib
+
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, LogonSession, ProcessRecord, sha256_hash, md5_hash, imphash, _new_guid, stable_agent_id, stable_ephemeral_id
-from core.time_engine import utc_now_str, jitter_ts
-from config.company import DOMAIN_NETBIOS, DOMAIN_FQDN
-
+from core.event_bus import (
+    EventBus,
+    ProcessRecord,
+    imphash,
+    md5_hash,
+    sha256_hash,
+    stable_agent_id,
+    stable_ephemeral_id,
+)
+from core.time_engine import utc_now_str
 
 # ── Sysmon task names from Sysmon manifest (verified) ────────────────────────
-_SYSMON_TASKS: Dict[str, str] = {
+_SYSMON_TASKS: dict[str, str] = {
     '1':  'Process Create (rule: ProcessCreate)',
     '2':  'File creation time changed (rule: FileCreateTime)',
     '3':  'Network connection detected (rule: NetworkConnect)',
@@ -73,9 +80,9 @@ def _sysmon_envelope(
     computer:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     rule_name:  str = "-",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Builds the Winlogbeat Kafka envelope for Sysmon events.
     Provider GUID verified: {5770385F-C22A-43E0-BF4C-06F5698FFBD9}
@@ -145,7 +152,7 @@ def gen_eid1(
     utc_dt:     datetime,
     bus:        EventBus,
     rule_name:  str = "-",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 1 Process Creation.
     Verified field names from Splunk Security Content Dataset b375f4d1
@@ -176,8 +183,8 @@ def gen_eid1(
         "Hashes":            _hashes(proc.image),
         "ParentProcessGuid": proc.parent_process_guid,
         "ParentProcessId":   str(
-            (bus.get_process(proc.parent_process_guid).process_id
-             if bus.get_process(proc.parent_process_guid) else bus.new_pid())
+            bus.get_process(proc.parent_process_guid).process_id
+             if bus.get_process(proc.parent_process_guid) else bus.new_pid()
         ),
         "ParentImage":       proc.parent_image,
         "ParentCommandLine": (
@@ -201,18 +208,13 @@ def gen_eid3(
     protocol:      str = "tcp",
     initiated:     bool = True,
     src_ip:        str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 3 Network Connection.
     Verified field names from ultimatewindowssecurity.com Event 90003
     (lab capture) and Splunk Security Content Dataset 01d84dff (2022-09-15).
     """
     src_port    = bus.new_src_port()
-    dest_is_ext = not (
-        dest_ip.startswith("10.") or
-        dest_ip.startswith("172.16.") or
-        dest_ip.startswith("192.168.")
-    )
     user_str = f"{user_domain}\\{proc.user}" if "\\" not in proc.user else proc.user
 
     event_data = {
@@ -252,7 +254,7 @@ def gen_eid7(
     signed:       bool = True,
     signature:    str = "Microsoft Windows",
     sig_status:   str = "Valid",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 7 Image Loaded.
     Verified field names from ultimatewindowssecurity.com Event 90007
@@ -292,7 +294,7 @@ def gen_eid8(
     start_address: str = "",
     start_module:  str = "",
     start_function:str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 8 CreateRemoteThread — code injection.
     Verified field names from Splunk Security Content Dataset df7a786c
@@ -333,7 +335,7 @@ def gen_eid10(
     bus:            EventBus,
     granted_access: str = "0x1400",
     call_trace:     str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 10 Process Access.
     GrantedAccess values from TrustedSec/SysmonCommunityGuide and
@@ -376,7 +378,7 @@ def gen_eid11(
     user_domain:  str,
     utc_dt:       datetime,
     bus:          EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 11 File Creation.
     Verified field list from BHIS Sysmon breakdown and defensiveorigins.com.
@@ -405,7 +407,7 @@ def gen_eid22(
     utc_dt:        datetime,
     bus:           EventBus,
     query_status:  str = "0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 22 DNS Query.
     TrustedSec SysmonCommunityGuide confirms: generated when process calls
@@ -435,7 +437,7 @@ def gen_eid23(
     utc_dt:       datetime,
     bus:          EventBus,
     is_executable: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Sysmon EID 23 File Delete (archived for forensics)."""
     user_str = f"{user_domain}\\{proc.user}" if "\\" not in proc.user else proc.user
     event_data = {
@@ -454,7 +456,7 @@ def gen_eid23(
 
 
 # ── PE metadata helpers ───────────────────────────────────────────────────────
-_PE_META: Dict[str, Dict[str, str]] = {
+_PE_META: dict[str, dict[str, str]] = {
     "cmd.exe":         {"desc": "Windows Command Processor",      "product": "Microsoft® Windows® Operating System", "company": "Microsoft Corporation", "ver": "10.0.19041.1"},
     "powershell.exe":  {"desc": "Windows PowerShell",             "product": "Microsoft® Windows® Operating System", "company": "Microsoft Corporation", "ver": "10.0.19041.1"},
     "powershell_ise.exe":{"desc":"Windows PowerShell ISE",        "product": "Microsoft® Windows® Operating System", "company": "Microsoft Corporation", "ver": "10.0.19041.1"},

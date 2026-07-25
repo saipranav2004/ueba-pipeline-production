@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import bisect
 from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -52,7 +52,7 @@ _SOURCE_USER_ATTRIBUTED_EVENT_TYPES = frozenset({"sysmon_8", "sysmon_10"})
 _FAILED_AUTH_EVENT_TYPES = frozenset({"4625", "4771"})
 
 
-def _user_key(ne: NormalizedEvent) -> Optional[str]:
+def _user_key(ne: NormalizedEvent) -> str | None:
     """Resolve the behavioural-model user key for one event, excluding machine
     and SYSTEM identities.
 
@@ -80,8 +80,8 @@ def _user_key(ne: NormalizedEvent) -> Optional[str]:
 
 
 def _issuance_ips_before(
-    history: Sequence[Tuple[datetime, str]], when: datetime
-) -> Set[str]:
+    history: Sequence[tuple[datetime, str]], when: datetime
+) -> set[str]:
     """Source addresses an account was issued a Kerberos ticket from before ``when``.
 
     ``history`` must be ordered by timestamp. Tuple ordering makes ``(when,)`` sort
@@ -98,7 +98,7 @@ def _issuance_ips_before(
 # returns a flat feature dict. Kept as plain functions (not classes) —
 # there's no state beyond the window's event list.
 
-def _auth_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _auth_features(events: list[NormalizedEvent]) -> dict[str, float]:
     e4624 = [e for e in events if e.event_type == "4624"]
     e4625 = [e for e in events if e.event_type == "4625"]
     e4672 = [e for e in events if e.event_type == "4672"]
@@ -109,7 +109,7 @@ def _auth_features(events: List[NormalizedEvent]) -> Dict[str, float]:
         return sum(1 for e in e4624 if e.fields.get("logon_type") == logon_type) / total_logons
 
     # Aggregate IP features for password spray detection (T1110.003).
-    fail_by_ip: Dict[str, set] = defaultdict(set)
+    fail_by_ip: dict[str, set] = defaultdict(set)
     for e in e4625:
         ip = e.fields.get("src_ip")
         target = e.fields.get("target_user_name_norm") or e.fields.get("target_user_name")
@@ -151,7 +151,7 @@ def _auth_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _kerberos_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _kerberos_features(events: list[NormalizedEvent]) -> dict[str, float]:
     e4768 = [e for e in events if e.event_type == "4768"]
     e4769 = [e for e in events if e.event_type == "4769"]
     e4771 = [e for e in events if e.event_type == "4771"]
@@ -179,7 +179,7 @@ def _kerberos_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _process_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _process_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """Sysmon-sourced process / network / injection behaviour. Covers process
     create (EID 1), network connect (3), image load (7), CreateRemoteThread
     (8, code injection), ProcessAccess (10), file create (11), and per-process
@@ -235,7 +235,7 @@ def _process_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _task_scheduler_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _task_scheduler_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """Scheduled-task persistence / execution behaviour (T1053.005), from Task
     Scheduler events 106 (registered), 200 (action run), 201 (action completed)."""
     t106 = [e for e in events if e.event_type == "task_106"]
@@ -258,7 +258,7 @@ def _task_scheduler_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _wmi_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _wmi_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """WMI activity: T1047 execution (5857) and T1546.003 event-subscription
     persistence (5861)."""
     w5857 = [e for e in events if e.event_type == "wmi_5857"]
@@ -273,7 +273,7 @@ def _wmi_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _defender_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _defender_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """Windows Defender AV/EDR verdicts (1116 detected, 1117 action taken).
     `f_malware_detected_flag` is a first-party AV verdict, not an inferred
     behavioural signal -- among the highest-value binary features available."""
@@ -287,7 +287,7 @@ def _defender_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _privilege_ad_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _privilege_ad_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """AD object-access / attribute-modification behaviour: DCSync (T1003.006,
     event 4662) and RBCD / SPN manipulation (T1134.001 / T1558.003 setup,
     event 5136)."""
@@ -303,7 +303,7 @@ def _privilege_ad_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _dns_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _dns_features(events: list[NormalizedEvent]) -> dict[str, float]:
     d256 = [e for e in events if e.event_type == "dns_256"]
     total = len(d256) or 1
     qnames = [e.fields.get("qname") for e in d256 if e.fields.get("qname")]
@@ -328,7 +328,7 @@ def _dns_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _powershell_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _powershell_features(events: list[NormalizedEvent]) -> dict[str, float]:
     p4104 = [e for e in events if e.event_type == "4104"]
 
     return {
@@ -345,7 +345,7 @@ def _powershell_features(events: List[NormalizedEvent]) -> Dict[str, float]:
     }
 
 
-def _account_lifecycle_features(events: List[NormalizedEvent]) -> Dict[str, float]:
+def _account_lifecycle_features(events: list[NormalizedEvent]) -> dict[str, float]:
     """Account lifecycle events (4720/4726/4722/4725/4728/4729/4732/4733/4738/
     4741/4742/4743): onboarding, offboarding, group membership changes,
     password resets, computer account management. These capture identity
@@ -394,7 +394,7 @@ def _account_lifecycle_features(events: List[NormalizedEvent]) -> Dict[str, floa
     }
 
 
-_GROUP_EXTRACTORS: Dict[str, Callable[[List[NormalizedEvent]], Dict[str, float]]] = {
+_GROUP_EXTRACTORS: dict[str, Callable[[list[NormalizedEvent]], dict[str, float]]] = {
     "auth": _auth_features,
     "kerberos": _kerberos_features,
     "sysmon_process": _process_features,
@@ -414,7 +414,7 @@ _GROUP_EXTRACTORS: Dict[str, Callable[[List[NormalizedEvent]], Dict[str, float]]
 # in normalize.py (otherwise the events arrive as event_type="unknown" and the
 # extractor sees an empty list. The capability manifest guards against that
 # phantom coverage: a group is claimed only for events that actually mapped).
-_GROUP_EVENT_TYPES: Dict[str, set] = {
+_GROUP_EVENT_TYPES: dict[str, set] = {
     "auth": {"4624", "4625", "4672"},
     "kerberos": {"4768", "4769", "4771"},
     "sysmon_process": {"sysmon_1", "sysmon_3", "sysmon_7", "sysmon_8",
@@ -425,7 +425,8 @@ _GROUP_EVENT_TYPES: Dict[str, set] = {
     "wmi": {"wmi_5857", "wmi_5861"},
     "defender": {"defender_1116", "defender_1117"},
     "privilege_ad": {"4662", "5136"},
-    "account_lifecycle": {"4720", "4722", "4724", "4725", "4726", "4728", "4729", "4732", "4738", "4741", "4742", "4743"},
+    "account_lifecycle": {"4720", "4722", "4724", "4725", "4726", "4728",
+                          "4729", "4732", "4738", "4741", "4742", "4743"},
 }
 
 
@@ -434,23 +435,23 @@ class FeatureVector:
     user: str
     window_start: datetime
     window_end: datetime
-    values: Dict[str, float] = field(default_factory=dict)
-    group_provenance: Dict[str, str] = field(default_factory=dict)  # feature -> group
+    values: dict[str, float] = field(default_factory=dict)
+    group_provenance: dict[str, str] = field(default_factory=dict)  # feature -> group
     # Relational edge endpoints observed for this entity in this window
     # (workstation, src_ip). Retained for provenance/inspection; live edge
     # anomalies are computed per-event by the graph track (auth_graph_anomaly),
     # not from this per-window summary.
-    edges: Dict[str, List[str]] = field(default_factory=dict)
+    edges: dict[str, list[str]] = field(default_factory=dict)
 
-    def as_array(self, feature_order: List[str]) -> np.ndarray:
+    def as_array(self, feature_order: list[str]) -> np.ndarray:
         return np.array([self.values.get(f, 0.0) for f in feature_order], dtype=np.float64)
 
 
-def feature_order_for_manifest(manifest: CapabilityManifest) -> List[str]:
+def feature_order_for_manifest(manifest: CapabilityManifest) -> list[str]:
     """Deterministic, sorted feature ordering for a given manifest — this is
     what gets persisted alongside a trained model (persistence/store.py) so
     scoring always maps columns consistently."""
-    names: List[str] = []
+    names: list[str] = []
     for group in sorted(_GROUP_EXTRACTORS):
         if not manifest.is_group_available(group):
             continue
@@ -462,9 +463,9 @@ def feature_order_for_manifest(manifest: CapabilityManifest) -> List[str]:
 
 
 def observed_entity_windows(
-    events: List[NormalizedEvent],
+    events: list[NormalizedEvent],
     window_hours: float,
-) -> Set[Tuple[str, datetime]]:
+) -> set[tuple[str, datetime]]:
     """The ``(entity, window_start)`` pairs an entity was observed in.
 
     This is the number of tests an entity received, which the Šidák correction in
@@ -476,7 +477,7 @@ def observed_entity_windows(
     changing it there would silently alter every correction.
     """
     window_seconds = window_hours * 3600.0
-    observed: Set[Tuple[str, datetime]] = set()
+    observed: set[tuple[str, datetime]] = set()
     for ne in events:
         if ne.event_time is None:
             continue
@@ -490,10 +491,10 @@ def observed_entity_windows(
 
 
 def build_user_windows(
-    events: List[NormalizedEvent],
+    events: list[NormalizedEvent],
     manifest: CapabilityManifest,
     window_hours: float,
-) -> List[FeatureVector]:
+) -> list[FeatureVector]:
     """
     Buckets events by user and fixed-size UTC time window, then computes
     every available feature group per (user, window). Events with no
@@ -501,7 +502,7 @@ def build_user_windows(
     be attributed to a behavioral baseline) and counted by the caller via
     IngestStats, not silently absorbed here.
     """
-    by_user_window: Dict[tuple, List[NormalizedEvent]] = defaultdict(list)
+    by_user_window: dict[tuple, list[NormalizedEvent]] = defaultdict(list)
     window_seconds = window_hours * 3600.0
 
     # Cross-entity aggregation. Password spray (T1110.003) is a CROSS-user
@@ -511,7 +512,7 @@ def build_user_windows(
     # count is structurally <= 1. Failed-logon fan-out is aggregated per
     # (source_ip, window bucket) across ALL users, then each attacking IP's true
     # fan-out is attributed back onto every victim window it touched.
-    ip_bucket_targets: Dict[tuple, set] = defaultdict(set)
+    ip_bucket_targets: dict[tuple, set] = defaultdict(set)
 
     # Per-user TGT/TGS issuance history, for the golden/silver ticket indicators
     # below. A forged ticket never contacts the DC, so it presents from a host the
@@ -526,8 +527,8 @@ def build_user_windows(
     # an address would retroactively mark the attacker's use of it as familiar.
     # That is a look-ahead dependence, and it is not reproducible at inference
     # where only the past exists.
-    user_tgt_history: Dict[str, List[tuple]] = defaultdict(list)
-    user_tgs_history: Dict[str, List[tuple]] = defaultdict(list)
+    user_tgt_history: dict[str, list[tuple]] = defaultdict(list)
+    user_tgs_history: dict[str, list[tuple]] = defaultdict(list)
 
     for ne in events:
         if ne.event_time is None:
@@ -562,7 +563,7 @@ def build_user_windows(
 
     active_groups = [g for g in _GROUP_EXTRACTORS if manifest.is_group_available(g)]
 
-    vectors: List[FeatureVector] = []
+    vectors: list[FeatureVector] = []
     for (user, bucket), user_events in by_user_window.items():
         window_start = datetime.fromtimestamp(bucket * window_seconds,
                                                 tz=user_events[0].event_time.tzinfo)

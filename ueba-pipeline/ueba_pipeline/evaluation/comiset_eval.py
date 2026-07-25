@@ -26,8 +26,8 @@ product claim — exactly the honesty the rest of the evaluation docs insist on.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from ueba_pipeline.config.schema import load_config
 from ueba_pipeline.engine import BehavioralEngine, EngineConfig, is_graph_event
@@ -41,7 +41,7 @@ _LABEL_KEYS = ("rule_technique_id", "Rule_technique_id")
 _LABEL_NAME_KEYS = ("rule_technique_name", "Rule_technique_name")
 
 
-def _label(source: dict) -> Optional[str]:
+def _label(source: dict) -> str | None:
     for k in _LABEL_KEYS:
         v = source.get(k)
         if v not in (None, "", "-"):
@@ -50,7 +50,7 @@ def _label(source: dict) -> Optional[str]:
 
 
 def load_comiset_graph_events(records: Iterable[dict],
-                              max_events: Optional[int] = None) -> Iterator[NormalizedEvent]:
+                              max_events: int | None = None) -> Iterator[NormalizedEvent]:
     """Yield the graph-relevant NormalizedEvents from COMISET raw records.
 
     Only events the relational detector actually models are kept (auth, Kerberos,
@@ -85,11 +85,11 @@ class ComisetReport:
     n_graph_events: int
     n_malicious: int
     n_malicious_visible: int                # labelled events that project >=1 graph edge
-    channel_mix: Dict[str, int]
-    technique_mix: Dict[str, int]
-    view_novelty: Dict[str, dict]           # view -> {edges, novel_rate} on benign fit
+    channel_mix: dict[str, int]
+    technique_mix: dict[str, int]
+    view_novelty: dict[str, dict]           # view -> {edges, novel_rate} on benign fit
     roc: object = None                      # RocResult or None
-    caveats: List[str] = field(default_factory=list)
+    caveats: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         vis = (f"  ({self.n_malicious_visible:,} project a modelled relation; the rest "
@@ -101,7 +101,8 @@ class ComisetReport:
             f"{c}={n}" for c, n in sorted(self.channel_mix.items(), key=lambda x: -x[1])[:8]))
         if self.technique_mix:
             out.append("  labelled techniques: " + ", ".join(
-                f"{t}={n}" for t, n in sorted(self.technique_mix.items(), key=lambda x: -x[1])[:10]))
+                f"{t}={n}"
+                for t, n in sorted(self.technique_mix.items(), key=lambda x: -x[1])[:10]))
         out.append("")
         out.append("  REAL per-view benign novelty (production held-out calibration):")
         out.append(f"    {'view':14s} {'edges':>8s} {'benign novelty':>15s}")
@@ -124,15 +125,15 @@ def evaluate_comiset(archive_path: str, max_events: int = 1_500_000,
     ``archive_path`` may be a partial/still-downloading ``.zip`` — it is read by
     chunked raw inflation, not ``zipfile``.
     """
-    events: List[NormalizedEvent] = list(load_comiset_graph_events(
+    events: list[NormalizedEvent] = list(load_comiset_graph_events(
         iter_comiset_archive(archive_path, max_uncompressed_bytes=max_uncompressed_bytes),
         max_events=max_events))
 
     from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector
     projector = AuthGraphAnomalyDetector()   # edges_for is stateless (pure projection)
 
-    channel_mix: Dict[str, int] = {}
-    technique_mix: Dict[str, int] = {}
+    channel_mix: dict[str, int] = {}
+    technique_mix: dict[str, int] = {}
     n_malicious_visible = 0
     for e in events:
         channel_mix[e.channel] = channel_mix.get(e.channel, 0) + 1
@@ -148,7 +149,7 @@ def evaluate_comiset(archive_path: str, max_events: int = 1_500_000,
     benign = [e for e in events if not is_malicious(e)]
     cfg = load_config()
     engine = BehavioralEngine(config=EngineConfig(window_hours=cfg.window.feature_window_hours))
-    view_novelty: Dict[str, dict] = {}
+    view_novelty: dict[str, dict] = {}
     if benign:
         engine.fit(benign, config_capability=cfg.capability)
         view_novelty = engine.view_stats

@@ -1,12 +1,15 @@
 from ueba_pipeline.monitoring.drift import (
-    detect_concept_drift,
-    detect_capability_drift,
-    detect_volume_dropout,
     CapabilityDriftReport,
     VolumeAnomalyReport,
+    detect_capability_drift,
+    detect_concept_drift,
+    detect_volume_dropout,
 )
 
 __all__ = [
-    "detect_concept_drift", "detect_capability_drift", "detect_volume_dropout",
-    "CapabilityDriftReport", "VolumeAnomalyReport",
+    "CapabilityDriftReport",
+    "VolumeAnomalyReport",
+    "detect_capability_drift",
+    "detect_concept_drift",
+    "detect_volume_dropout",
 ]

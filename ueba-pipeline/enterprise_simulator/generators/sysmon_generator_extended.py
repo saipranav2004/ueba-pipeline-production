@@ -21,17 +21,19 @@ All field names verified against:
 """
 
 from __future__ import annotations
-import random
-import hashlib
+
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, ProcessRecord, _new_guid, stable_agent_id, stable_ephemeral_id
-from generators.sysmon_generator import _SYSMON_TASKS, sha256_hash, md5_hash
-from core.time_engine import utc_now_str
 from config.company import DOMAIN_NETBIOS
+from core.event_bus import EventBus, ProcessRecord, stable_agent_id, stable_ephemeral_id
+from core.time_engine import utc_now_str
+
+from generators.sysmon_generator import _SYSMON_TASKS, md5_hash, sha256_hash
 
 
 def _sysmon_env(
@@ -39,8 +41,8 @@ def _sysmon_env(
     computer:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
-) -> Dict[str, Any]:
+    event_data: dict[str, Any],
+) -> dict[str, Any]:
     """Sysmon Winlogbeat envelope — same structure as sysmon_generator.py."""
     ts_str     = utc_now_str(utc_dt)
     ingest_dt  = utc_dt + timedelta(seconds=bus._rng.randint(1, 5))
@@ -107,7 +109,7 @@ def gen_eid6(
     signed:        bool = True,
     signature:     str = "Microsoft Windows",
     sig_status:    str = "Valid",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 6 Driver Loaded.
     Verified fields from SwiftOnSecurity/sysmon-config DATA comment:
@@ -134,7 +136,7 @@ def gen_eid12(
     event_type:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 12 RegistryEvent (Object create and delete).
     Verified fields from Microsoft Q&A Sysmon schema (2021-12-30) and
@@ -166,7 +168,7 @@ def gen_eid13(
     details:       str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 13 RegistryEvent (Value Set).
     Verified fields from ultimatewindowssecurity.com Event 90013 live XML
@@ -197,7 +199,7 @@ def gen_eid14(
     new_name:      str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 14 RegistryEvent (Key and Value Rename).
     Verified fields from Microsoft Q&A Sysmon schema and gravwell.io
@@ -228,7 +230,7 @@ def gen_eid15(
     contents:        str,
     utc_dt:          datetime,
     bus:             EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 15 FileCreateStreamHash.
     Verified fields from marcusedmondson.substack.com Sysmon parse guide
@@ -260,7 +262,7 @@ def gen_eid17(
     pipe_name: str,
     utc_dt:    datetime,
     bus:       EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 17 PipeEvent (Pipe Created).
     Verified fields from SwiftOnSecurity/sysmon-config DATA comment:
@@ -286,7 +288,7 @@ def gen_eid18(
     pipe_name: str,
     utc_dt:    datetime,
     bus:       EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Sysmon EID 18 PipeEvent (Pipe Connected).
     Same fields as EID 17; generated when a client connects to a named pipe.

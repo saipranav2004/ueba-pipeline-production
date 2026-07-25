@@ -18,8 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import networkx as nx
 
 from ueba_pipeline.graph.identity_graph import (
-    IdentityGraph, NODE_USER, NODE_GROUP, NODE_COMPUTER,
-    EDGE_MEMBER_OF, EDGE_CAN_ACCESS,
+    EDGE_CAN_ACCESS,
+    EDGE_MEMBER_OF,
+    NODE_COMPUTER,
+    NODE_GROUP,
+    NODE_USER,
+    IdentityGraph,
 )
 
 

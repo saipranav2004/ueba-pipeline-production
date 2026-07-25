@@ -108,7 +108,7 @@ def _valid_event_json():
 
 
 def test_kafka_source_normalizes_and_commits_after_yield():
-    from ueba_pipeline.ingestion.source import KafkaEventSource, IngestStats
+    from ueba_pipeline.ingestion.source import IngestStats, KafkaEventSource
 
     commit_log = []
     eof = _FakeMessage(error=_FakeError(_FakeKafkaError._PARTITION_EOF))
@@ -131,7 +131,7 @@ def test_kafka_source_normalizes_and_commits_after_yield():
 
 
 def test_kafka_source_quarantines_malformed_json():
-    from ueba_pipeline.ingestion.source import KafkaEventSource, IngestStats
+    from ueba_pipeline.ingestion.source import IngestStats, KafkaEventSource
 
     commit_log = []
     eof = _FakeMessage(error=_FakeError(_FakeKafkaError._PARTITION_EOF))

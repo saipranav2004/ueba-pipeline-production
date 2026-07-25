@@ -14,18 +14,21 @@ To convert UTC → IST: add 330 minutes.
 """
 
 from __future__ import annotations
+
+import os
 import random
-import math
-from datetime import datetime, timedelta, date
-from typing import List, Optional, Tuple, Dict
-import sys, os
+import sys
+from datetime import date, datetime, timedelta
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from config.company import (
-    SIM_START_DATE, SIM_END_DATE,
-    UTC_OFFSET_TOTAL_MINUTES,  # 330 minutes = +5:30
+    BUSINESS_HOURS_END_IST,
+    BUSINESS_HOURS_START_IST,
     IN_HOLIDAYS_2025,
-    BUSINESS_HOURS_START_IST, BUSINESS_HOURS_END_IST,
+    SIM_END_DATE,
+    SIM_START_DATE,
+    UTC_OFFSET_TOTAL_MINUTES,  # 330 minutes = +5:30
 )
 
 # IST is always UTC+5:30 — no DST, no variation.
@@ -39,7 +42,7 @@ def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
-def all_sim_dates() -> List[date]:
+def all_sim_dates() -> list[date]:
     start = parse_date(SIM_START_DATE)
     end   = parse_date(SIM_END_DATE)
     out, cur = [], start
@@ -55,7 +58,7 @@ def is_business_day(d: date) -> bool:
     return d.weekday() < 5 and d not in holidays
 
 
-def local_to_utc(local_dt: datetime, _: date = None) -> datetime:
+def local_to_utc(local_dt: datetime, _: date | None = None) -> datetime:
     """
     Convert a naive IST local datetime to UTC.
     IST = UTC+5:30, so UTC = IST - 5h30m = IST - 330 minutes.
@@ -73,12 +76,12 @@ def utc_to_local(utc_dt: datetime) -> datetime:
 def utc_now_str(utc_dt: datetime) -> str:
     """
     ISO 8601 UTC string with 7-digit fractional precision (100-nanosecond units).
-    
+
     Real Windows EventLog timestamps have 7 fractional digits:
       "2025-01-06T04:15:22.1234567Z"
     The 7th digit (100ns unit) is deterministic based on the microsecond value
     to avoid all-zero timestamps that expose synthetic origin.
-    
+
     Verified from EvidenceForge utils/windows_event/time.py:
       format_windows_system_time adds a 0-9 digit for the sub-microsecond unit.
     """
@@ -106,7 +109,7 @@ def _float_hour_to_datetime(d: date, fhour: float) -> datetime:
     minute = int(remainder // 60)
     remainder -= minute * 60
     second = int(remainder)
-    microsecond = int(round((remainder - second) * 1_000_000))
+    microsecond = round((remainder - second) * 1_000_000)
     if microsecond >= 1_000_000:  # rounding at the boundary
         microsecond -= 1_000_000
         second += 1
@@ -215,7 +218,7 @@ class DailySchedule:
         d:       date,
         drift:   float = 0.0,
         partial: bool  = False,
-    ) -> Tuple[datetime, datetime]:
+    ) -> tuple[datetime, datetime]:
         """Returns (logon_utc, logoff_utc) for this employee on date d."""
         logon_h  = self.logon_hour_ist(drift)
         logoff_h = self.logoff_hour_ist(logon_h, partial)
@@ -270,7 +273,7 @@ def service_account_ts(
     All maintenance windows given in IST, then converted to UTC.
     """
     # (IST_hour, IST_minute, spread_minutes)
-    schedules: Dict[str, Tuple[int, int, int]] = {
+    schedules: dict[str, tuple[int, int, int]] = {
         "backup":           (2,  30, 30),   # 02:30 IST = 21:00 UTC prev day
         "wsus":             (3,  0,  30),   # 03:00 IST = 21:30 UTC prev day
         "sql_maintenance":  (4,  0,  30),   # 04:00 IST = 22:30 UTC prev day

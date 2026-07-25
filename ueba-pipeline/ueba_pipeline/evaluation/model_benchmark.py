@@ -65,9 +65,9 @@ import json
 import statistics
 import time
 import tracemalloc
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -106,7 +106,7 @@ class WindowDataset:
     entities: np.ndarray          # account per row, for entity-disjoint splits
     hours: np.ndarray             # window start per row, for temporal splits
     families: np.ndarray          # attack technique per positive row, "" if benign
-    feature_names: List[str]
+    feature_names: list[str]
     contract: str                 # feature-contract version+hash the matrix was built under
     source: str
 
@@ -144,7 +144,8 @@ def _attack_principals(attack: dict) -> set:
 
 
 def graph_reference_scores(data_dir: str, data: WindowDataset,
-                           train_fraction: float = 0.60) -> Optional[Dict[Tuple[str, np.datetime64], float]]:
+                           train_fraction: float = 0.60,
+                           ) -> dict[tuple[str, np.datetime64], float] | None:
     """Score the shipped graph track per window under the same temporal split.
 
     The graph detector reads relational edges, not the feature matrix, so it
@@ -161,7 +162,7 @@ def graph_reference_scores(data_dir: str, data: WindowDataset,
     the same train/test division.
     """
     try:
-        from ueba_pipeline.engine import EngineConfig, BehavioralEngine, _floor_hour
+        from ueba_pipeline.engine import BehavioralEngine, EngineConfig, _floor_hour
     except Exception:
         return None
 
@@ -182,7 +183,7 @@ def graph_reference_scores(data_dir: str, data: WindowDataset,
     engine.fit(train, config_capability=config.capability)
     detections, _ = engine.score(test)
 
-    scores: Dict[Tuple[str, np.datetime64], float] = {}
+    scores: dict[tuple[str, np.datetime64], float] = {}
     for d in detections:
         if d.graph_p >= 1.0:
             continue
@@ -225,7 +226,8 @@ def build_window_dataset(data_dir: str, window_hours: float = 1.0) -> WindowData
         start, end = window.window_start, window.window_end
         family = ""
         for attack in attacks:
-            if entity in attack["_principals"] and start <= attack["_end"] and end >= attack["_start"]:
+            if (entity in attack["_principals"]
+                    and start <= attack["_end"] and end >= attack["_start"]):
                 family = attack["attack_type"]
                 break
         rows.append([float(window.values.get(n, 0.0)) for n in names])
@@ -247,10 +249,10 @@ def build_window_dataset(data_dir: str, window_hours: float = 1.0) -> WindowData
 
 
 # ── split protocols ────────────────────────────────────────────────────────
-Fold = Tuple[np.ndarray, np.ndarray]
+Fold = tuple[np.ndarray, np.ndarray]
 
 
-def temporal_folds(data: WindowDataset, train_fraction: float = 0.60) -> List[Fold]:
+def temporal_folds(data: WindowDataset, train_fraction: float = 0.60) -> list[Fold]:
     """One causal split: everything before the cut trains, everything after tests."""
     order = np.argsort(data.hours, kind="stable")
     cut = int(len(order) * train_fraction)
@@ -265,7 +267,7 @@ def temporal_folds(data: WindowDataset, train_fraction: float = 0.60) -> List[Fo
 
 
 def entity_disjoint_folds(data: WindowDataset, n_folds: int = 5,
-                          seed: int = RANDOM_SEED) -> List[Fold]:
+                          seed: int = RANDOM_SEED) -> list[Fold]:
     """K folds in which no account appears on both sides.
 
     Accounts are partitioned, then rows follow their account. Splitting rows
@@ -278,7 +280,7 @@ def entity_disjoint_folds(data: WindowDataset, n_folds: int = 5,
     rng.shuffle(unique)
     buckets = np.array_split(unique, n_folds)
 
-    folds: List[Fold] = []
+    folds: list[Fold] = []
     for held_out in buckets:
         if not len(held_out):
             continue
@@ -291,7 +293,7 @@ def entity_disjoint_folds(data: WindowDataset, n_folds: int = 5,
 
 def entity_and_time_disjoint_folds(data: WindowDataset, n_folds: int = 5,
                                     train_fraction: float = 0.60,
-                                    seed: int = RANDOM_SEED) -> List[Fold]:
+                                    seed: int = RANDOM_SEED) -> list[Fold]:
     """The strict protocol: train and test share neither an account nor an hour.
 
     Entity-disjoint folds alone are not sufficient, and measurably so. Their folds
@@ -317,7 +319,7 @@ def entity_and_time_disjoint_folds(data: WindowDataset, n_folds: int = 5,
         return []
     boundary = data.hours[order[cut]]
 
-    folds: List[Fold] = []
+    folds: list[Fold] = []
     for held_out in buckets:
         if not len(held_out):
             continue
@@ -329,7 +331,7 @@ def entity_and_time_disjoint_folds(data: WindowDataset, n_folds: int = 5,
     return folds
 
 
-def attack_family_folds(data: WindowDataset) -> List[Tuple[str, Fold]]:
+def attack_family_folds(data: WindowDataset) -> list[tuple[str, Fold]]:
     """Leave-one-technique-out: the held-out family's positives never train.
 
     Windows of the held-out family are removed from training rather than
@@ -338,7 +340,7 @@ def attack_family_folds(data: WindowDataset) -> List[Tuple[str, Fold]]:
     has nothing to do with the model.
     """
     present = sorted({f for f in np.unique(data.families) if f})
-    folds: List[Tuple[str, Fold]] = []
+    folds: list[tuple[str, Fold]] = []
     for family in present:
         is_family = data.families == family
         train = np.flatnonzero(~is_family)
@@ -358,13 +360,15 @@ class ModelSpec:
     supervised: bool
     # Methods whose fit cost grows worse than linearly get a training cap; the
     # cap is recorded in the results so a truncated fit is never read as a full one.
-    max_train_rows: Optional[int] = None
+    max_train_rows: int | None = None
     note: str = ""
 
 
-def _supervised_zoo() -> List[ModelSpec]:
+def _supervised_zoo() -> list[ModelSpec]:
     from sklearn.ensemble import (
-        ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier,
+        ExtraTreesClassifier,
+        HistGradientBoostingClassifier,
+        RandomForestClassifier,
     )
     from sklearn.impute import SimpleImputer
     from sklearn.linear_model import LogisticRegression
@@ -422,7 +426,7 @@ def _supervised_zoo() -> List[ModelSpec]:
     ]
 
 
-def _unsupervised_zoo() -> List[ModelSpec]:
+def _unsupervised_zoo() -> list[ModelSpec]:
     from sklearn.ensemble import IsolationForest
     from sklearn.impute import SimpleImputer
     from sklearn.neighbors import LocalOutlierFactor
@@ -453,7 +457,7 @@ def _unsupervised_zoo() -> List[ModelSpec]:
     ]
 
 
-def model_zoo() -> List[ModelSpec]:
+def model_zoo() -> list[ModelSpec]:
     return _supervised_zoo() + _unsupervised_zoo()
 
 
@@ -474,7 +478,7 @@ class ModelResult:
     recall_at_budget: float
     f1_at_budget: float
     mcc_at_budget: float
-    brier: Optional[float]
+    brier: float | None
     fit_seconds: float
     score_seconds: float
     peak_mib: float
@@ -490,7 +494,8 @@ def _recall_at_fpr(y_true: np.ndarray, scores: np.ndarray, max_fpr: float) -> fl
     return float(tpr[allowed].max()) if allowed.any() else 0.0
 
 
-def _budget_metrics(y_true: np.ndarray, scores: np.ndarray, k: int) -> Tuple[float, float, float, float]:
+def _budget_metrics(y_true: np.ndarray, scores: np.ndarray,
+                    k: int) -> tuple[float, float, float, float]:
     """Precision/recall/F1/MCC when the top ``k`` scored windows are alerted.
 
     ``k`` comes from the alert budget and the length of the test period, so no
@@ -507,7 +512,9 @@ def _budget_metrics(y_true: np.ndarray, scores: np.ndarray, k: int) -> Tuple[flo
     return float(precision), float(recall), float(f1), float(mcc)
 
 
-def _score_model(spec: ModelSpec, X_train, y_train, X_test) -> Tuple[np.ndarray, float, float, float, bool, Optional[np.ndarray]]:
+def _score_model(
+    spec: ModelSpec, X_train, y_train, X_test,
+) -> tuple[np.ndarray, float, float, float, bool, np.ndarray | None]:
     """Fit and score one model, returning anomaly scores where higher = more suspicious."""
     rng = np.random.default_rng(RANDOM_SEED)
     truncated = False
@@ -537,7 +544,7 @@ def _score_model(spec: ModelSpec, X_train, y_train, X_test) -> Tuple[np.ndarray,
     tracemalloc.stop()
 
     started = time.perf_counter()
-    probabilities: Optional[np.ndarray] = None
+    probabilities: np.ndarray | None = None
     if spec.supervised:
         probabilities = model.predict_proba(X_test)[:, 1]
         scores = probabilities
@@ -552,7 +559,7 @@ def _score_model(spec: ModelSpec, X_train, y_train, X_test) -> Tuple[np.ndarray,
 
 def evaluate_fold(spec: ModelSpec, data: WindowDataset, train_idx: np.ndarray,
                   test_idx: np.ndarray, protocol: str, fold: str,
-                  alert_budget_per_day: float) -> Optional[ModelResult]:
+                  alert_budget_per_day: float) -> ModelResult | None:
     from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
     y_train, y_test = data.y[train_idx], data.y[test_idx]
@@ -571,7 +578,7 @@ def evaluate_fold(spec: ModelSpec, data: WindowDataset, train_idx: np.ndarray,
     days = max(
         (data.hours[test_idx].max() - data.hours[test_idx].min())
         / np.timedelta64(1, "D"), 1.0)
-    k = int(round(alert_budget_per_day * float(days)))
+    k = round(alert_budget_per_day * float(days))
     precision, recall, f1, mcc = _budget_metrics(y_test, scores, k)
 
     return ModelResult(
@@ -600,10 +607,10 @@ def evaluate_fold(spec: ModelSpec, data: WindowDataset, train_idx: np.ndarray,
 
 # ── benchmark driver ───────────────────────────────────────────────────────
 def evaluate_graph_reference(data: WindowDataset,
-                             scores_by_cell: Dict[Tuple[str, np.datetime64], float],
+                             scores_by_cell: dict[tuple[str, np.datetime64], float],
                              train_fraction: float = 0.60,
                              alert_budget_per_day: float = DEFAULT_ALERT_BUDGET_PER_DAY,
-                             ) -> Optional[ModelResult]:
+                             ) -> ModelResult | None:
     """Turn the graph track's per-window scores into a temporal-protocol row.
 
     Rows in the temporal test fold are looked up in the graph score map; a window
@@ -626,7 +633,7 @@ def evaluate_graph_reference(data: WindowDataset,
     ])
     days = max((data.hours[test_idx].max() - data.hours[test_idx].min())
                / np.timedelta64(1, "D"), 1.0)
-    k = int(round(alert_budget_per_day * float(days)))
+    k = round(alert_budget_per_day * float(days))
     precision, recall, f1, mcc = _budget_metrics(y_test, scores, k)
 
     return ModelResult(
@@ -654,7 +661,7 @@ def evaluate_graph_reference(data: WindowDataset,
 
 def run_protocol(data: WindowDataset, protocol: str,
                  alert_budget_per_day: float = DEFAULT_ALERT_BUDGET_PER_DAY,
-                 specs: Optional[Sequence[ModelSpec]] = None) -> List[ModelResult]:
+                 specs: Sequence[ModelSpec] | None = None) -> list[ModelResult]:
     specs = list(specs or model_zoo())
 
     if protocol == "temporal":
@@ -668,7 +675,7 @@ def run_protocol(data: WindowDataset, protocol: str,
     else:
         raise ValueError(f"unknown protocol {protocol!r}")
 
-    results: List[ModelResult] = []
+    results: list[ModelResult] = []
     for fold_name, (train_idx, test_idx) in folds:
         for spec in specs:
             outcome = evaluate_fold(spec, data, train_idx, test_idx,
@@ -697,19 +704,19 @@ class Aggregate:
     truncated: bool
 
 
-def aggregate(results: Sequence[ModelResult]) -> List[Aggregate]:
+def aggregate(results: Sequence[ModelResult]) -> list[Aggregate]:
     """Collapse folds and seeds to mean and spread per (model, protocol)."""
-    grouped: Dict[Tuple[str, str], List[ModelResult]] = {}
+    grouped: dict[tuple[str, str], list[ModelResult]] = {}
     for r in results:
         grouped.setdefault((r.model, r.protocol), []).append(r)
 
-    def mean(values: List[float]) -> float:
+    def mean(values: list[float]) -> float:
         return float(statistics.fmean(values)) if values else 0.0
 
-    def sd(values: List[float]) -> float:
+    def sd(values: list[float]) -> float:
         return float(statistics.stdev(values)) if len(values) > 1 else 0.0
 
-    out: List[Aggregate] = []
+    out: list[Aggregate] = []
     for (model, protocol), rows in sorted(grouped.items()):
         out.append(Aggregate(
             model=model,
@@ -733,7 +740,7 @@ def aggregate(results: Sequence[ModelResult]) -> List[Aggregate]:
 
 def render(aggregates: Sequence[Aggregate], datasets: Sequence[WindowDataset]) -> str:
     """A report that states the conditions the numbers were produced under."""
-    lines: List[str] = []
+    lines: list[str] = []
     prevalences = [d.prevalence for d in datasets]
     lines.append(
         f"datasets={len(datasets)}  windows={sum(len(d) for d in datasets)}  "
@@ -773,7 +780,7 @@ def render(aggregates: Sequence[Aggregate], datasets: Sequence[WindowDataset]) -
 def run_benchmark(data_dirs: Sequence[str], protocols: Sequence[str],
                   window_hours: float = 1.0,
                   alert_budget_per_day: float = DEFAULT_ALERT_BUDGET_PER_DAY,
-                  ) -> Tuple[List[ModelResult], List[WindowDataset]]:
+                  ) -> tuple[list[ModelResult], list[WindowDataset]]:
     """Run every protocol over every dataset, pooling folds across datasets.
 
     Datasets are kept separate rather than concatenated: each is an independent
@@ -781,7 +788,7 @@ def run_benchmark(data_dirs: Sequence[str], protocols: Sequence[str],
     split that cuts across unrelated clocks.
     """
     datasets = [build_window_dataset(d, window_hours) for d in data_dirs]
-    results: List[ModelResult] = []
+    results: list[ModelResult] = []
     for data in datasets:
         for protocol in protocols:
             results.extend(run_protocol(data, protocol, alert_budget_per_day))

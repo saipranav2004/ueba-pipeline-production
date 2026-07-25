@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
 
 # Weak, proper Gamma prior on an entity's per-period rate. Mean 1 event per
 # period with variance 1: uninformative enough that a few periods of real history
@@ -117,15 +116,15 @@ class GammaPoissonCounts:
     prior_shape: float = DEFAULT_PRIOR_SHAPE
     prior_rate: float = DEFAULT_PRIOR_RATE
     min_periods: int = DEFAULT_MIN_PERIODS
-    _total: Dict[str, float] = field(default_factory=dict)
-    _periods: Dict[str, float] = field(default_factory=dict)
+    _total: dict[str, float] = field(default_factory=dict)
+    _periods: dict[str, float] = field(default_factory=dict)
 
     def observe(self, entity: str, count: float) -> None:
         """Fold one period's count for ``entity`` into its baseline."""
         self._total[entity] = self._total.get(entity, 0.0) + float(count)
         self._periods[entity] = self._periods.get(entity, 0.0) + 1.0
 
-    def posterior(self, entity: str) -> Tuple[float, float]:
+    def posterior(self, entity: str) -> tuple[float, float]:
         """``(r, p)`` of the current posterior predictive for ``entity``."""
         r = self.prior_shape + self._total.get(entity, 0.0)
         denom = self.prior_rate + self._periods.get(entity, 0.0)

@@ -23,9 +23,8 @@ Public egress IPs use realistic Indian ISP / cloud ranges:
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Dict, List
 
+from dataclasses import dataclass
 
 # ── Company identity ──────────────────────────────────────────────────────────
 COMPANY_NAME      = "Nexovate Solutions Pvt. Ltd."
@@ -147,16 +146,16 @@ class DepartmentProfile:
     work_duration_mean:  float   # mean hours worked per day
     work_duration_std:   float
     remote_fraction:     float
-    server_access:       List[str]
+    server_access:       list[str]
     uses_powershell:     bool
     ps_scripts_per_week: float
     task_scheduler_use:  bool
-    typical_processes:   List[str]
-    dns_domains:         List[str]
+    typical_processes:   list[str]
+    dns_domains:         list[str]
     ou_path:             str = ""
 
 
-DEPARTMENTS: Dict[str, DepartmentProfile] = {
+DEPARTMENTS: dict[str, DepartmentProfile] = {
     "Engineering": DepartmentProfile(
         name="Engineering", headcount=80,
         login_start_mean=9.5, login_start_std=1.0,

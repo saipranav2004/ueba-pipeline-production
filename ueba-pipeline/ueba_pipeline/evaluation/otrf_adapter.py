@@ -40,14 +40,13 @@ timestamps use a short fractional-second-plus-``Z`` form.
 """
 from __future__ import annotations
 
-import io
 import json
 import tarfile
 import urllib.request
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional, Union
 
 from ueba_pipeline.parsing.normalize import NormalizedEvent, normalize_event
 
@@ -77,7 +76,7 @@ class OTRFDataset:
 # ingest and to project the expected behavioural graph view(s). Paths are stable
 # locations in the OTRF repository. This is a starting set, not the whole corpus;
 # add a row to extend coverage.
-OTRF_DATASETS: List[OTRFDataset] = [
+OTRF_DATASETS: list[OTRFDataset] = [
     OTRFDataset(
         "dcsync", "credential_access/host/"
         "covenant_dcsync_dcerpc_drsuapi_DsGetNCChanges.zip",
@@ -119,7 +118,7 @@ def _read_ndjson_bytes(data: bytes) -> Iterator[dict]:
             yield json.loads(line)
 
 
-def read_otrf_records(source: Union[str, Path]) -> Iterator[dict]:
+def read_otrf_records(source: str | Path) -> Iterator[dict]:
     """Yield raw event dicts from an OTRF ``.zip``, ``.tar.gz`` or ``.json`` file.
 
     A single archive holds one newline-delimited JSON file; this reads it without
@@ -144,7 +143,7 @@ def read_otrf_records(source: Union[str, Path]) -> Iterator[dict]:
         raise ValueError(f"unrecognised OTRF source extension: {path.name}")
 
 
-def read_otrf_events(source: Union[str, Path],
+def read_otrf_events(source: str | Path,
                      keep_raw: bool = False) -> Iterator[NormalizedEvent]:
     """Yield NormalizedEvents from an OTRF dataset, through the production parser.
 
@@ -159,7 +158,7 @@ def read_otrf_events(source: Union[str, Path],
             yield event
 
 
-def download_otrf_dataset(dataset: OTRFDataset, dest_dir: Union[str, Path],
+def download_otrf_dataset(dataset: OTRFDataset, dest_dir: str | Path,
                           timeout: float = 60.0) -> Path:
     """Download one dataset archive to ``dest_dir`` and return the local path.
 
@@ -175,7 +174,7 @@ def download_otrf_dataset(dataset: OTRFDataset, dest_dir: Union[str, Path],
     return target
 
 
-def dataset_by_name(name: str) -> Optional[OTRFDataset]:
+def dataset_by_name(name: str) -> OTRFDataset | None:
     for dataset in OTRF_DATASETS:
         if dataset.name == name:
             return dataset

@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import ClassVar
 
 from ueba_pipeline.parsing.normalize import NormalizedEvent, normalize_event
 
@@ -31,12 +32,16 @@ class IngestStats:
     unrecognized_envelope: int = 0
     parsed_with_warnings: int = 0
     by_event_type: dict | None = None
+    # "file:line" of the first record that failed to parse as JSON. A count alone
+    # tells an operator that the feed is damaged but not where to look, which is
+    # the difference between an actionable alert and a shrug.
+    first_unparseable: str | None = None
 
     def __post_init__(self) -> None:
         if self.by_event_type is None:
             self.by_event_type = {}
 
-    def record(self, ne: Optional[NormalizedEvent]) -> None:
+    def record(self, ne: NormalizedEvent | None) -> None:
         self.total_records += 1
         if ne is None:
             self.unrecognized_envelope += 1
@@ -78,14 +83,16 @@ class FileEventSource(EventSource):
     # reading it alongside the per-channel files would double-count every event.
     # The recursive glob (`**/*.jsonl`) cannot know that, so these directories
     # are excluded by name.
-    _ALTERNATE_REPRESENTATION_DIRS = {"kafka_json", "csv_exports"}
+    _ALTERNATE_REPRESENTATION_DIRS: ClassVar[frozenset[str]] = frozenset(
+        {"kafka_json", "csv_exports"}
+    )
 
-    def __init__(self, paths: list[str | Path], stats: Optional[IngestStats] = None):
+    def __init__(self, paths: list[str | Path], stats: IngestStats | None = None):
         self.paths = [Path(p) for p in paths]
         self.stats = stats if stats is not None else IngestStats()
 
     @classmethod
-    def from_directory(cls, root: str | Path, pattern: str = "**/*.jsonl") -> "FileEventSource":
+    def from_directory(cls, root: str | Path, pattern: str = "**/*.jsonl") -> FileEventSource:
         root = Path(root)
         all_paths = sorted(root.glob(pattern))
         paths = [
@@ -110,7 +117,7 @@ class FileEventSource(EventSource):
         event's raw_event_data (unused by feature extraction) to roughly halve
         per-event memory on the batch training/scoring path."""
         for path in self.paths:
-            with open(path, "r") as f:
+            with open(path) as f:
                 for line_no, line in enumerate(f, start=1):
                     line = line.strip()
                     if not line:
@@ -120,6 +127,8 @@ class FileEventSource(EventSource):
                     except json.JSONDecodeError:
                         self.stats.total_records += 1
                         self.stats.unrecognized_envelope += 1
+                        if self.stats.first_unparseable is None:
+                            self.stats.first_unparseable = f"{path}:{line_no}"
                         continue
                     ne = normalize_event(raw, keep_raw=keep_raw)
                     self.stats.record(ne)
@@ -163,10 +172,10 @@ class KafkaEventSource(EventSource):
         bootstrap_servers: list[str],
         topic: str,
         group_id: str,
-        stats: Optional[IngestStats] = None,
+        stats: IngestStats | None = None,
         poll_timeout_seconds: float = 1.0,
         auto_offset_reset: str = "latest",
-        extra_config: Optional[dict] = None,
+        extra_config: dict | None = None,
         stop_on_eof: bool = False,
     ):
         self.bootstrap_servers = bootstrap_servers

@@ -13,11 +13,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ueba_pipeline.graph.identity_graph import (
-    IdentityGraph, NODE_USER, NODE_GROUP, NODE_COMPUTER, EDGE_MEMBER_OF,
     EDGE_CAN_ACCESS,
+    EDGE_MEMBER_OF,
+    NODE_COMPUTER,
+    NODE_GROUP,
+    NODE_USER,
+    IdentityGraph,
 )
 from ueba_pipeline.graph.visualize import (
-    build_visualization_payload, render_html,
+    build_visualization_payload,
+    render_html,
 )
 
 
@@ -83,7 +88,10 @@ def test_large_graph_is_capped_to_top_risk_subset():
     assets, flags truncation, and never dangles an attack path onto a hidden
     node."""
     from ueba_pipeline.graph.identity_graph import (
-        IdentityGraph, NODE_USER, NODE_COMPUTER, EDGE_CAN_ACCESS,
+        EDGE_CAN_ACCESS,
+        NODE_COMPUTER,
+        NODE_USER,
+        IdentityGraph,
     )
     g = IdentityGraph()
     g.add_node("DC", NODE_COMPUTER, role="domain controller")

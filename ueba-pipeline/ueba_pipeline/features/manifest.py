@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field, asdict
-from typing import Dict, Iterable, List, Set
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, field
 
 from ueba_pipeline.config.schema import CapabilityConfig
 from ueba_pipeline.parsing.normalize import NormalizedEvent
@@ -18,10 +18,10 @@ from ueba_pipeline.parsing.normalize import NormalizedEvent
 
 @dataclass
 class CapabilityManifest:
-    available_groups: Set[str] = field(default_factory=set)
-    event_type_counts: Dict[str, int] = field(default_factory=dict)
+    available_groups: set[str] = field(default_factory=set)
+    event_type_counts: dict[str, int] = field(default_factory=dict)
     total_events_scanned: int = 0
-    dropped_constant_fields: Dict[str, List[str]] = field(default_factory=dict)
+    dropped_constant_fields: dict[str, list[str]] = field(default_factory=dict)
     manifest_hash: str = ""
 
     def is_group_available(self, group: str) -> bool:
@@ -33,7 +33,7 @@ class CapabilityManifest:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "CapabilityManifest":
+    def from_dict(cls, d: dict) -> CapabilityManifest:
         d = dict(d)
         d["available_groups"] = set(d.get("available_groups", []))
         return cls(**d)
@@ -71,8 +71,8 @@ def build_capability_manifest(
     aggregator to silently rediscover per-window.
     """
     manifest = CapabilityManifest()
-    group_event_counts: Dict[str, int] = {}
-    field_value_sets: Dict[str, Dict[str, Set[str]]] = {}  # event_type -> field -> values
+    group_event_counts: dict[str, int] = {}
+    field_value_sets: dict[str, dict[str, set[str]]] = {}  # event_type -> field -> values
     total = 0
 
     events = list(events)  # bootstrap window is bounded; materializing is fine

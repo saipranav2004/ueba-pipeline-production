@@ -96,9 +96,9 @@ def main() -> None:
     print("\n-- standalone --", flush=True)
     for view in ALL_VIEWS:
         det, tot, fp, caught = evaluate_config(estates, [view])
-        unique = len(caught - (base_caught - caught))
+        displaced = len(caught - base_caught)
         print(f"{'only ' + view:24}{det:>5}/{tot:<6}{fp:>9.2f}"
-              f"{'':>8}  attacks: {det}", flush=True)
+              f"{det - base_det:>+8}  caught only here: {displaced}", flush=True)
 
 
 if __name__ == "__main__":

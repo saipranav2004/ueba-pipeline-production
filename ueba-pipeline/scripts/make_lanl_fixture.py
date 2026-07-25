@@ -21,7 +21,7 @@ import random
 
 
 def generate(out_dir: str, n_users: int = 300, n_servers: int = 12,
-             days: int = 4, seed: int = 7) -> "tuple[int, int]":
+             days: int = 4, seed: int = 7) -> tuple[int, int]:
     rng = random.Random(seed)
     os.makedirs(out_dir, exist_ok=True)
     users = [f"U{i}" for i in range(n_users)]
@@ -31,8 +31,9 @@ def generate(out_dir: str, n_users: int = 300, n_servers: int = 12,
     reaches = {u: rng.sample(servers, rng.randint(2, 4)) for u in users}
 
     horizon = days * 86400
-    auth_rows: "list[tuple]" = []          # (time, srcU, dstU, srcC, dstC, type, logon, orient, result)
-    redteam_rows: "list[tuple]" = []       # (time, user, srcC, dstC)
+    # (time, srcU, dstU, srcC, dstC, type, logon, orient, result)
+    auth_rows: list[tuple] = []
+    redteam_rows: list[tuple] = []       # (time, user, srcC, dstC)
 
     # -- benign traffic ---------------------------------------------------
     for u in users:
@@ -54,8 +55,8 @@ def generate(out_dir: str, n_users: int = 300, n_servers: int = 12,
         start = int(horizon * 0.6) + rng.randint(0, int(horizon * 0.3))
         # a foothold host the victim never uses, then hops to several new hosts
         foothold = f"C{5000 + rng.randint(0, 400)}"
-        chain = [foothold] + rng.sample([c for c in servers if c not in reaches[u]],
-                                        k=min(3, max(1, n_servers - len(reaches[u]))))
+        chain = [foothold, *rng.sample([c for c in servers if c not in reaches[u]],
+                                       k=min(3, max(1, n_servers - len(reaches[u]))))]
         t = start
         for i in range(len(chain) - 1):
             t += rng.randint(30, 600)

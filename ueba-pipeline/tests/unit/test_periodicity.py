@@ -6,6 +6,7 @@ behaviour (a period gives tiny p, noise does not) must hold.
 """
 import math
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +27,7 @@ def test_gpvalue_matches_hand_computed_small_m():
 def test_gpvalue_is_monotone_decreasing_in_g():
     """A more dominant ordinate is more significant (smaller p)."""
     ps = [fisher_g_pvalue(g, 100) for g in (0.05, 0.1, 0.2, 0.4, 0.8)]
-    assert all(a > b for a, b in zip(ps, ps[1:]))
+    assert all(a > b for a, b in pairwise(ps))
 
 
 def test_gpvalue_bounds():

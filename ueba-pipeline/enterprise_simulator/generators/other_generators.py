@@ -11,18 +11,19 @@ Field names verified from:
 """
 
 from __future__ import annotations
-import random
+
 import hashlib
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, LogonSession, ProcessRecord, _new_guid, stable_agent_id, stable_ephemeral_id
+from config.company import DOMAIN_NETBIOS
 from core.employees import user_sid as _user_sid
+from core.event_bus import EventBus, LogonSession, stable_agent_id, stable_ephemeral_id
 from core.time_engine import utc_now_str
-from config.company import DOMAIN_NETBIOS, DOMAIN_FQDN
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DNS SERVER ANALYTICAL LOG — EID 256 / 257
@@ -47,8 +48,8 @@ def _dns_envelope(
     dns_server: str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
-) -> Dict[str, Any]:
+    event_data: dict[str, Any],
+) -> dict[str, Any]:
     """
     Winlogbeat envelope for DNS Server Analytical events.
     Provider GUID: {EB79061A-A566-4698-9119-3ED2807060E7}
@@ -109,7 +110,7 @@ def gen_dns_256(
     qtype:         str = "A",
     rcode:         str = "0",
     tcp:           str = "0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     DNS EID 256 — Query Received (LOOK_UP).
     Field names verified from NXLog live JSON:
@@ -149,7 +150,7 @@ def gen_dns_257(
     bus:           EventBus,
     qtype:         str = "A",
     rcode:         str = "0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """DNS EID 257 — Query Response sent back to client."""
     event_data = {
         "TCP":         "0",
@@ -184,7 +185,7 @@ def _fake_packet_data(qname: str, resolved_ip: str) -> str:
 # POWERSHELL OPERATIONAL LOG — EID 4103 / 4104
 # ══════════════════════════════════════════════════════════════════════════════
 
-_PS_TASKS: Dict[str, str] = {
+_PS_TASKS: dict[str, str] = {
     "4103": "Pipeline Execution Details",
     "4104": "Execute a Remote Command",
     "4105": "Command Start",
@@ -198,12 +199,12 @@ def _ps_envelope(
     user_sid:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     level:      int = 5,
     activity_id: str = "",
     process_id: int = 0,
     thread_id:  int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Winlogbeat envelope for PowerShell Operational events.
     Provider GUID (WinPS 5.1): {A0C1853B-5C40-4B15-8766-3CF1C58F985A}
@@ -282,7 +283,7 @@ def gen_ps_4104(
     message_total:     int = 1,
     process_id:        int = 0,
     activity_id:       str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     PowerShell EID 4104 Script Block Logging.
     Field names verified from Psmths/windows-forensic-artifacts live XML
@@ -337,7 +338,7 @@ def gen_ps_4103(
     pipeline_id:     str = "1",
     process_id:      int = 0,
     activity_id:     str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     PowerShell EID 4103 Module Pipeline Execution.
     Field names verified from NXLog live JSON (2020-01-29):
@@ -385,7 +386,7 @@ def gen_ps_4103(
 # TASK SCHEDULER OPERATIONAL LOG — EID 106 / 200 / 201 / 4698
 # ══════════════════════════════════════════════════════════════════════════════
 
-_TASK_TASK_NAMES: Dict[str, str] = {
+_TASK_TASK_NAMES: dict[str, str] = {
     "106": "Task Registration",
     "200": "Action started",
     "201": "Action completed",
@@ -397,12 +398,12 @@ def _task_envelope(
     computer:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     channel:    str = "Microsoft-Windows-TaskScheduler/Operational",
     provider:   str = "Microsoft-Windows-TaskScheduler",
     provider_guid: str = "{DE7B24EA-73C8-4A09-985D-5BDADCFA9017}",
     task:       str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Winlogbeat envelope for Task Scheduler Operational events.
     Provider GUID: {DE7B24EA-73C8-4A09-985D-5BDADCFA9017}
@@ -455,7 +456,7 @@ def gen_task_106(
     computer:     str,
     utc_dt:       datetime,
     bus:          EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Task Scheduler EID 106 — Task Registered.
     Field names verified from NXLog live JSON (2022-02-27):
@@ -475,7 +476,7 @@ def gen_task_200(
     computer:        str,
     utc_dt:          datetime,
     bus:             EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Task Scheduler EID 200 — Action Started.
     Field names verified from Splunk Security Content Dataset f8c777f8 (2024-03-04):
@@ -498,7 +499,7 @@ def gen_task_201(
     computer:        str,
     utc_dt:          datetime,
     bus:             EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Task Scheduler EID 201 — Action Completed."""
     event_data = {
         "TaskName":       task_name,
@@ -515,7 +516,7 @@ def gen_task_4698(
     task_content:   str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Security Log EID 4698 — Scheduled Task Created.
     Uses Security channel and provider.

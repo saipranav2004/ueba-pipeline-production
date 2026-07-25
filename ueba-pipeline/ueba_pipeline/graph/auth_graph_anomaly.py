@@ -25,10 +25,8 @@ attacker cannot normalise their own behaviour by repetition.
 from __future__ import annotations
 
 import math
-
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
 
 # Windows logon types that represent a *remote* authentication (an edge between
 # two hosts) rather than a local/console session. 3 = network, 10 = remote
@@ -50,8 +48,6 @@ REMOTE_LOGON_TYPES = {"3", "10"}
 # arrived at: give it its own queue and its own budget rather than dropping it.
 RELATIONAL_VIEWS = frozenset({"user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op"})
 EXECUTION_VIEWS = frozenset({"proc_exec"})
-
-
 
 
 # Event id -> privileged directory-operation class, for the dir_op view. This is
@@ -128,7 +124,7 @@ class AuthGraphConfig:
     # measured: scripts/ablate_graph_views.py drops each in turn and re-runs the
     # benchmark, so a view is kept on measured recall rather than on the
     # plausibility of its rationale.
-    enabled_views: Optional[frozenset] = None
+    enabled_views: frozenset | None = None
 
 
 @dataclass
@@ -146,24 +142,25 @@ class AuthGraphAnomalyDetector:
     # needs. A plain float per edge: the burst term that once tracked per-tick
     # repetition here was measured and removed (see module docstring), leaving the
     # cumulative count as the only per-edge statistic scoring reads.
-    _edges: Dict[str, Dict[Tuple[str, str], float]] = field(default_factory=lambda: defaultdict(dict))
+    _edges: dict[str, dict[tuple[str, str], float]] = field(
+        default_factory=lambda: defaultdict(dict))
     # Principals (edge source) seen per view during baseline. Used to gate
     # novelty for views where entities have a dense baseline: a *change* for a
     # known entity is meaningful, its first-ever appearance is not.
-    _principals: Dict[str, set] = field(default_factory=lambda: defaultdict(set))
+    _principals: dict[str, set] = field(default_factory=lambda: defaultdict(set))
     # Sufficient statistics for the Dirichlet-smoothed conditional
     # P(dst | src) = (c_sd + alpha * pi_d) / (n_s + alpha).
     # All three are plain counters: O(1) update, streaming-safe, no retraining.
     # Plain dicts rather than a nested defaultdict, so the state serialises to an
     # explicit schema without a factory the loader would have to reconstruct.
-    _dst_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    _src_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    _src_totals: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    _dst_totals: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    _view_totals: Dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    _dst_counts: dict[str, dict[str, float]] = field(default_factory=dict)
+    _src_counts: dict[str, dict[str, float]] = field(default_factory=dict)
+    _src_totals: dict[str, dict[str, float]] = field(default_factory=dict)
+    _dst_totals: dict[str, dict[str, float]] = field(default_factory=dict)
+    _view_totals: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
     # -- edge extraction ----------------------------------------------------
-    def edges_for(self, event) -> list[Tuple[str, Tuple[str, str]]]:
+    def edges_for(self, event) -> list[tuple[str, tuple[str, str]]]:
         """Project one normalized event onto ``(view, (src, dst))`` edges.
 
         Edges are drawn from remote logons (4624/4625, logon type 3/10),
@@ -186,7 +183,7 @@ class AuthGraphAnomalyDetector:
         """
         f = event.fields
         et = event.event_type
-        out: list[Tuple[str, Tuple[str, str]]] = []
+        out: list[tuple[str, tuple[str, str]]] = []
 
         if et.startswith("4624") or et.startswith("4625"):
             logon_type = str(f.get("logon_type") or "")
@@ -194,7 +191,6 @@ class AuthGraphAnomalyDetector:
                 return out
             user = _norm(f.get("target_user_name"))
             src = _source_identity(f)
-            dst = _norm(event.computer_name)
             if user and src:
                 out.append(("user_src", (user, src)))
         elif et.startswith("sysmon_10"):
@@ -276,7 +272,7 @@ class AuthGraphAnomalyDetector:
         return out
 
     # -- scoring ------------------------------------------------------------
-    def score_event_views(self, event, absorb: bool = True) -> "list[Tuple[str, float]]":
+    def score_event_views(self, event, absorb: bool = True) -> list[tuple[str, float]]:
         """Return ``[(view, surprise), ...]`` for every edge this event projects.
 
         Each view is scored independently so its surprise can be calibrated
@@ -292,7 +288,7 @@ class AuthGraphAnomalyDetector:
         """
         if event.event_time is None:
             return []
-        out: "list[Tuple[str, float]]" = []
+        out: list[tuple[str, float]] = []
         for view, edge in self.edges_for(event):
             s = self._surprise(view, edge)
             if absorb:
@@ -310,7 +306,7 @@ class AuthGraphAnomalyDetector:
         return max((s for _, s in self.score_event_views(event, absorb=absorb)),
                    default=0.0)
 
-    def _surprise(self, view: str, edge: Tuple[str, str]) -> float:
+    def _surprise(self, view: str, edge: tuple[str, str]) -> float:
         """Bidirectional Dirichlet-smoothed edge surprise, in nats.
 
             surprise = max( -log P(dst | src), -log P(src | dst) )
@@ -361,7 +357,7 @@ class AuthGraphAnomalyDetector:
         return max(fwd, rev)
 
     # -- model-based predictive p-value (Heard & Rubin-Delanchy 2016) --------
-    def predictive_pvalue(self, view: str, edge: Tuple[str, str]) -> float:
+    def predictive_pvalue(self, view: str, edge: tuple[str, str]) -> float:
         """Discrete predictive p-value for this edge, from the model itself.
 
         Heard & Rubin-Delanchy, "Network-wide anomaly detection via the Dirichlet
@@ -456,7 +452,7 @@ class AuthGraphAnomalyDetector:
         total_mass = math.fsum(sorted(contributions))
         return float(min(max(total_mass / (n_a + a), 1e-12), 1.0))
 
-    def _absorb(self, view: str, edge: Tuple[str, str], score: float) -> None:
+    def _absorb(self, view: str, edge: tuple[str, str], score: float) -> None:
         # MIDAS-F: do not let a flagged edge normalise itself into the baseline.
         if score >= self.config.absorb_surprise:
             return

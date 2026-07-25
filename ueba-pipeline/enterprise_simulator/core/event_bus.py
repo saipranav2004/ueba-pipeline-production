@@ -13,13 +13,15 @@ exactly as real Windows produces.
 """
 
 from __future__ import annotations
-import uuid
-import random
+
 import hashlib
+import os
+import random
+import sys
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-import sys, os
+from datetime import datetime
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
@@ -202,7 +204,7 @@ class LogonSession:
     # Kerberos correlation
     logon_guid:      str = ""   # set explicitly by open_session() via seeded RNG
     # Linked processes spawned during this session
-    process_guids:   List[str] = field(default_factory=list)
+    process_guids:   list[str] = field(default_factory=list)
     active:          bool = True
 
 
@@ -224,7 +226,7 @@ class ProcessRecord:
     parent_image:       str
     start_time_utc:     datetime
     computer:           str
-    hashes:             Dict[str, str] = field(default_factory=dict)
+    hashes:             dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -252,13 +254,13 @@ class EventBus:
         self._rng               = rng
         self._sim_seed          = sim_seed  # for stable_ephemeral_id per host
         self._record_counters: dict[tuple[str,str], WindowsRecordIdCounter] = {}
-        self._sessions:  Dict[str, LogonSession]  = {}  # logon_id → session
-        self._processes: Dict[str, ProcessRecord] = {}  # process_guid → record
-        self._tickets:   List[KerberosTicket]     = []
+        self._sessions:  dict[str, LogonSession]  = {}  # logon_id → session
+        self._processes: dict[str, ProcessRecord] = {}  # process_guid → record
+        self._tickets:   list[KerberosTicket]     = []
         self._record_counters: dict[tuple[str,str], WindowsRecordIdCounter] = {}  # (channel, host) → counter
 
         # Cache: user → [active session logon_ids]
-        self._user_sessions: Dict[str, List[str]] = {}
+        self._user_sessions: dict[str, list[str]] = {}
 
     # ── Session management ────────────────────────────────────────────────────
 
@@ -306,17 +308,17 @@ class EventBus:
         self._user_sessions.setdefault(samaccountname, []).append(logon_id)
         return session
 
-    def close_session(self, logon_id: str) -> Optional[LogonSession]:
+    def close_session(self, logon_id: str) -> LogonSession | None:
         """Marks a session as closed (triggers a 4634 logoff event)."""
         session = self._sessions.get(logon_id)
         if session:
             session.active = False
         return session
 
-    def get_session(self, logon_id: str) -> Optional[LogonSession]:
+    def get_session(self, logon_id: str) -> LogonSession | None:
         return self._sessions.get(logon_id)
 
-    def active_sessions_for_user(self, samaccountname: str) -> List[LogonSession]:
+    def active_sessions_for_user(self, samaccountname: str) -> list[LogonSession]:
         ids = self._user_sessions.get(samaccountname, [])
         return [self._sessions[i] for i in ids if i in self._sessions and self._sessions[i].active]
 
@@ -366,7 +368,7 @@ class EventBus:
 
         return proc
 
-    def get_process(self, guid: str) -> Optional[ProcessRecord]:
+    def get_process(self, guid: str) -> ProcessRecord | None:
         return self._processes.get(guid)
 
     # ── Kerberos ticket tracking ──────────────────────────────────────────────
@@ -390,7 +392,7 @@ class EventBus:
         self._tickets.append(ticket)
         return ticket
 
-    def latest_tgt(self, user: str) -> Optional[KerberosTicket]:
+    def latest_tgt(self, user: str) -> KerberosTicket | None:
         """Returns the most recent TGT for a user (for LogonGuid correlation)."""
         for t in reversed(self._tickets):
             if t.user == user and t.is_tgt:
@@ -409,7 +411,7 @@ class EventBus:
 
     def next_record_id(self, channel_or_key: str, hostname: str = "", utc_epoch: float | None = None) -> int:
         """Return the next EventRecordID for a channel+hostname pair.
-        
+
         Accepts two calling conventions:
           bus.next_record_id("Security:DC01.nexovate.local")  # legacy key
           bus.next_record_id("Security", "DC01.nexovate.local", ts)  # explicit

@@ -22,16 +22,19 @@ Event categories:
 """
 
 from __future__ import annotations
-import random
+
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, LogonSession, _new_guid, stable_agent_id, stable_ephemeral_id
-from core.employees import user_sid as _user_sid
-
 import hashlib as _hashlib
+
+from core.employees import user_sid as _user_sid
+from core.event_bus import EventBus, LogonSession, stable_agent_id, stable_ephemeral_id
+
 
 def _group_sid(group_name: str) -> str:
     """
@@ -42,8 +45,8 @@ def _group_sid(group_name: str) -> str:
     """
     rid = int(_hashlib.md5(f"group:{group_name}".encode()).hexdigest()[:4], 16) % 1000 + 5000
     return f"S-1-5-21-1484628597-1684816888-3125425894-{rid}"
+from config.company import DOMAIN_CONTROLLERS, DOMAIN_FQDN, DOMAIN_NETBIOS
 from core.time_engine import utc_now_str
-from config.company import DOMAIN_NETBIOS, DOMAIN_FQDN, DOMAIN_CONTROLLERS
 
 DC01 = DOMAIN_CONTROLLERS[0]
 
@@ -57,11 +60,11 @@ def _env(
     outcome:    str,
     utc_dt:     datetime,
     bus:        EventBus,
-    keywords:   List[str],
-    event_data: Dict[str, Any],
+    keywords:   list[str],
+    event_data: dict[str, Any],
     provider:   str = "Microsoft-Windows-Security-Auditing",
     provider_guid: str = "{54849625-5478-4994-A5BA-3E3B0328C30D}",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     ts_str    = utc_now_str(utc_dt)
     utc_dt = utc_dt.replace(microsecond=bus._rng.randint(0, 999_999))
     ingest_dt = utc_dt + timedelta(seconds=bus._rng.randint(1, 8))
@@ -117,7 +120,7 @@ def gen_4722(
     target_sam:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4722 — A user account was enabled.
     Fields verified: Microsoft Learn event-4722 + UWS encyclopedia.
@@ -144,7 +147,7 @@ def gen_4723(
     utc_dt:        datetime,
     bus:           EventBus,
     success:       bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4723 — An attempt was made to change an account's password (self-service).
     Verified: Microsoft Learn event-4723. SubjectUserName == TargetUserName
@@ -170,7 +173,7 @@ def gen_4724(
     target_sam:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4724 — An attempt was made to reset an account's password (admin reset).
     Verified: Microsoft Learn event-4724. SubjectUserName is the admin resetting;
@@ -195,7 +198,7 @@ def gen_4725(
     target_sam:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4725 — A user account was disabled."""
     ed = {
         "SubjectUserSid":    _user_sid(actor_session.samaccountname),
@@ -216,7 +219,7 @@ def gen_4726(
     target_sam:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4726 — A user account was deleted."""
     ed = {
         "SubjectUserSid":    _user_sid(actor_session.samaccountname),
@@ -239,7 +242,7 @@ def gen_4738(
     changed_attrs:    str,
     utc_dt:           datetime,
     bus:              EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4738 — A user account was changed.
     Verified: Microsoft Learn event-4738.
@@ -288,7 +291,7 @@ def gen_4729(
     group_name:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4729 — A member was removed from a security-enabled global group.
     Verified: ultimatewindowssecurity.com Event 4729; same schema as 4728.
@@ -317,7 +320,7 @@ def gen_4732(
     group_name:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4732 — A member was added to a security-enabled local group.
     Verified: wetnav.patelhari.com/event/4732 live capture.
@@ -346,7 +349,7 @@ def gen_4733(
     group_name:    str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4733 — A member was removed from a security-enabled local group."""
     ed = {
         "SubjectUserSid":    _user_sid(actor_session.samaccountname),
@@ -371,7 +374,7 @@ def gen_4735(
     utc_dt:        datetime,
     bus:           EventBus,
     change_desc:   str = "Group description was changed",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4735 — A security-enabled local group was changed.
     Verified: Microsoft Learn event-4735. Common when group description,
@@ -400,7 +403,7 @@ def gen_4741(
     computer_dns:    str,
     utc_dt:          datetime,
     bus:             EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4741 — A computer account was created.
     Verified: Microsoft Learn event-4741. Generated on DC when a new
@@ -442,7 +445,7 @@ def gen_4742(
     utc_dt:        datetime,
     bus:           EventBus,
     change_desc:   str = "%%2050\n\t\t\t\t%%2089",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4742 — A computer account was changed.
     Verified: Microsoft Learn event-4742. Most common cause is the
@@ -484,7 +487,7 @@ def gen_4743(
     computer_sam:  str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4743 — A computer account was deleted."""
     ed = {
         "SubjectUserSid":    _user_sid(actor_session.samaccountname),
@@ -505,7 +508,7 @@ def gen_4647(
     session: LogonSession,
     utc_dt:  datetime,
     bus:     EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4647 — User initiated logoff (interactive sessions — Type 2, 10).
     Verified: Microsoft Learn event-4647. Generated for interactive logon
@@ -537,7 +540,7 @@ def gen_4656(
     bus:          EventBus,
     process_name: str = "C:\\Windows\\System32\\svchost.exe",
     success:      bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4656 — A handle to an object was requested.
     Verified: Microsoft Learn event-4656. Precedes 4663.
@@ -573,7 +576,7 @@ def gen_4658(
     utc_dt:     datetime,
     bus:        EventBus,
     process_name: str = "C:\\Windows\\System32\\svchost.exe",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4658 — The handle to an object was closed (follows 4656/4663)."""
     ed = {
         "SubjectUserSid":    _user_sid(session.samaccountname),
@@ -599,7 +602,7 @@ def gen_4663(
     utc_dt:       datetime,
     bus:          EventBus,
     process_name: str = "C:\\Windows\\System32\\svchost.exe",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4663 — An attempt was made to access an object (after handle obtained via 4656).
     Verified: Microsoft Learn event-4663. Most common for file, folder, registry.
@@ -637,7 +640,7 @@ def gen_5140(
     utc_dt:      datetime,
     bus:         EventBus,
     share_server:str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     5140 — A network share object was accessed.
     Verified: Microsoft Learn event-5140. Generated on the file server
@@ -673,7 +676,7 @@ def gen_5145(
     share_server: str = "",
     access_mask:  str = "0x12019f",
     success:      bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     5145 — A network share object was checked for access (detailed share audit).
     Verified: ultimatewindowssecurity.com Event 5145. More verbose than 5140;
@@ -689,7 +692,7 @@ def gen_5145(
         "IpAddress":            src_ip,
         "IpPort":               str(bus._rng.randint(49152, 65535)),
         "ShareName":            share_name,
-        "ShareLocalPath":       f"\\\\*\\{share_name.lstrip('\\\\')}",
+        "ShareLocalPath":       f"\\\\*\\{share_name.removeprefix('\\\\')}",
         "RelativeTargetName":   relative_path,
         "AccessMask":           access_mask,
         "AccessList":           _access_list(access_mask),
@@ -712,7 +715,7 @@ def gen_1102(
     computer:    str,
     utc_dt:      datetime,
     bus:         EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     1102 — The audit log was cleared.
     Verified: ultimatewindowssecurity.com Event 1102. Always generated
@@ -738,7 +741,7 @@ def gen_4719(
     changes:       str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4719 — System audit policy was changed.
     Verified: Microsoft Learn event-4719.
@@ -766,7 +769,7 @@ def gen_4907(
     new_sd:        str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4907 — Auditing settings on object were changed.
     Verified: Microsoft Learn event-4907. Generated when SACL on a file
@@ -804,7 +807,7 @@ def gen_4697(
     service_account:  str,
     utc_dt:           datetime,
     bus:              EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4697 — A service was installed in the system.
     Verified: Microsoft Learn event-4697 live XML:
@@ -839,7 +842,7 @@ def gen_7045(
     computer:         str,
     utc_dt:           datetime,
     bus:              EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     7045 — A new service was installed (System channel, ServiceControlManager).
     Verified: Psmths/windows-forensic-artifacts live XML (2023-05-08):
@@ -871,7 +874,7 @@ def gen_7036(
     computer:     str,
     utc_dt:       datetime,
     bus:          EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     7036 — The service entered the running/stopped state (System channel).
     Verified: ultimatewindowssecurity.com Event 7036.
@@ -897,7 +900,7 @@ def gen_104(
     computer:  str,
     utc_dt:    datetime,
     bus:       EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     104 — The System event log was cleared (System channel).
     Verified: Active Countermeasures hunting guide.
@@ -929,7 +932,7 @@ def gen_6416(
     class_name:      str,
     utc_dt:          datetime,
     bus:             EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     6416 — A new external device was recognized by the system.
     Verified: Active Countermeasures hunting guide + Microsoft Learn event-6416.
@@ -966,7 +969,7 @@ def gen_4689(
     exit_status:  str,
     utc_dt:       datetime,
     bus:          EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     4689 — A process has exited.
     Verified: Microsoft Learn event-4689. Emitted when process terminates.

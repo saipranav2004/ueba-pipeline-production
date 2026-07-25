@@ -13,7 +13,9 @@ import pytest
 
 from ueba_pipeline.evaluation.comiset_adapter import iter_comiset_archive
 from ueba_pipeline.evaluation.comiset_eval import (
-    evaluate_comiset, is_malicious, load_comiset_graph_events,
+    evaluate_comiset,
+    is_malicious,
+    load_comiset_graph_events,
 )
 
 

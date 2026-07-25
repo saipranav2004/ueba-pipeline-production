@@ -9,58 +9,113 @@ Timezone: IST (UTC+5:30) — NO Daylight Saving Time ever
 """
 
 from __future__ import annotations
+
+import os
 import random
-from datetime import datetime, timedelta, date
-from typing import List, Tuple, Dict, Any, Optional
-import sys, os
+import sys
+from datetime import date, datetime, timedelta
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.employees import Employee, ServiceAccount, stable_seed
-from core.event_bus import EventBus, LogonSession, ProcessRecord, _new_guid
-from core.time_engine import (
-    DailySchedule, AbsenceCalendar, is_business_day, week_drift,
-    random_ts_in_session, service_account_ts, local_to_utc,
-    _float_hour_to_datetime,
+from config.company import (
+    DEPARTMENTS,
+    DOMAIN_CONTROLLERS,
+    DOMAIN_FQDN,
+    DOMAIN_NETBIOS,
+    NETWORK_RANGES,
+    SECURITY_GROUPS,
+    SERVERS,
+)
+
+# Other generators
+from generators.other_generators import (
+    build_task_content_xml,
+    gen_dns_256,
+    gen_dns_257,
+    gen_ps_4103,
+    gen_ps_4104,
+    gen_task_106,
+    gen_task_200,
+    gen_task_201,
+    gen_task_4698,
 )
 
 # Core security generators
 from generators.security_generator import (
-    gen_4624, gen_4634, gen_4625, gen_4672, gen_4648,
-    gen_4768, gen_4769, gen_4771, gen_4776, gen_4740,
-    gen_group_change, gen_4720, gen_4662, gen_5136,
-)
-# Extended security generators
-from generators.security_generator_extended import (
-    gen_4647, gen_4656, gen_4658, gen_4663,
-    gen_4689, gen_4697, gen_4719, gen_4722, gen_4723, gen_4724,
-    gen_4725, gen_4726, gen_4729, gen_4732, gen_4733, gen_4735,
-    gen_4738, gen_4741, gen_4742, gen_4743,
-    gen_5140, gen_5145, gen_6416, gen_7036, gen_7045,
-    gen_1102, gen_104, gen_4907,
-)
-# Sysmon generators
-from generators.sysmon_generator import (
-    gen_eid1, gen_eid3, gen_eid7, gen_eid10,
-    gen_eid11, gen_eid22, gen_eid23,
-)
-from generators.sysmon_generator_extended import (
-    gen_eid6, gen_eid12, gen_eid13, gen_eid14, gen_eid15,
-    gen_eid17, gen_eid18,
-)
-# Other generators
-from generators.other_generators import (
-    gen_dns_256, gen_dns_257, gen_ps_4104, gen_ps_4103,
-    gen_task_106, gen_task_200, gen_task_201, gen_task_4698,
-    build_task_content_xml,
-)
-from generators.wmi_defender_generators import (
-    gen_wmi_5857, gen_wmi_5858, gen_wmi_5861,
-    gen_defender_1116, gen_defender_1117, gen_defender_5007,
+    gen_4624,
+    gen_4625,
+    gen_4634,
+    gen_4672,
+    gen_4720,
+    gen_4740,
+    gen_4768,
+    gen_4769,
+    gen_4771,
+    gen_4776,
+    gen_group_change,
 )
 
-from config.company import (
-    DOMAIN_NETBIOS, DOMAIN_FQDN, DEPARTMENTS, DOMAIN_CONTROLLERS,
-    SERVERS, SIM_START_DATE, SECURITY_GROUPS, NETWORK_RANGES,
+# Extended security generators
+from generators.security_generator_extended import (
+    gen_4647,
+    gen_4656,
+    gen_4658,
+    gen_4663,
+    gen_4689,
+    gen_4697,
+    gen_4719,
+    gen_4722,
+    gen_4724,
+    gen_4725,
+    gen_4726,
+    gen_4729,
+    gen_4738,
+    gen_4741,
+    gen_4742,
+    gen_4743,
+    gen_4907,
+    gen_5140,
+    gen_5145,
+    gen_6416,
+    gen_7036,
+    gen_7045,
+)
+
+# Sysmon generators
+from generators.sysmon_generator import (
+    gen_eid1,
+    gen_eid3,
+    gen_eid10,
+    gen_eid11,
+    gen_eid22,
+)
+from generators.sysmon_generator_extended import (
+    gen_eid6,
+    gen_eid12,
+    gen_eid13,
+    gen_eid15,
+    gen_eid17,
+    gen_eid18,
+)
+from generators.wmi_defender_generators import (
+    gen_defender_1116,
+    gen_defender_1117,
+    gen_wmi_5857,
+    gen_wmi_5858,
+)
+
+from core.employees import Employee, ServiceAccount, stable_seed
+from core.event_bus import EventBus, LogonSession
+from core.time_engine import (
+    AbsenceCalendar,
+    DailySchedule,
+    _float_hour_to_datetime,
+    is_business_day,
+    local_to_utc,
+    random_ts_in_session,
+    service_account_ts,
+    week_drift,
 )
 
 # Deterministic SID per security group (position-based, stable across runs), so
@@ -80,12 +135,12 @@ DC01     = DOMAIN_CONTROLLERS[0]
 DNS_IP   = DC01["ip"]
 DNS_FQDN = DC01["fqdn"]
 
-_SERVER_BY_HOSTNAME: Dict[str, Dict] = {
+_SERVER_BY_HOSTNAME: dict[str, dict] = {
     s["hostname"]: s for s in SERVERS + DOMAIN_CONTROLLERS
 }
 
 # Standard Kerberos SPNs for internal servers
-_CIFS_SPNS: Dict[str, Tuple[str, str]] = {
+_CIFS_SPNS: dict[str, tuple[str, str]] = {
     "FS01":       ("cifs/FS01.nexovate.local",          "S-1-5-21-1484628597-1684816888-3125425894-1050"),
     "FS02":       ("cifs/FS02.nexovate.local",          "S-1-5-21-1484628597-1684816888-3125425894-1051"),
     "SQL01":      ("MSSQLSvc/SQL01.nexovate.local:1433","S-1-5-21-1484628597-1684816888-3125425894-1060"),
@@ -97,7 +152,7 @@ _CIFS_SPNS: Dict[str, Tuple[str, str]] = {
 }
 
 # Dept -> (share UNC, local path, server hostname)
-_DEPT_SHARES: Dict[str, Tuple[str, str, str]] = {
+_DEPT_SHARES: dict[str, tuple[str, str, str]] = {
     "Engineering": (r"\\FS01\Engineering$", r"D:\Shares\Engineering", "FS01"),
     "Finance":     (r"\\FS01\Finance$",     r"D:\Shares\Finance",     "FS01"),
     "HR":          (r"\\FS01\HR$",          r"D:\Shares\HR",          "FS01"),
@@ -110,7 +165,7 @@ _DEPT_SHARES: Dict[str, Tuple[str, str, str]] = {
 }
 
 # Files per department for realistic share access
-_DEPT_FILES: Dict[str, List[str]] = {
+_DEPT_FILES: dict[str, list[str]] = {
     "Engineering": ["architecture.md", "api_spec.yaml", "deployment_notes.txt",
                     "test_results.json", "config.yaml", "README.md"],
     "Finance":     ["Q1_Budget.xlsx", "Annual_Report_2024.xlsx", "Expenses_Jan.xlsx",
@@ -132,7 +187,7 @@ _DEPT_FILES: Dict[str, List[str]] = {
 }
 
 # Normal registry keys written by applications
-_NORMAL_REGISTRY_WRITES: List[Tuple[str, str, str]] = [
+_NORMAL_REGISTRY_WRITES: list[tuple[str, str, str]] = [
     (r"HKCU\SOFTWARE\Microsoft\Office\16.0\Common\General", "SharedDocPath", r"C:\Users\Default\Documents"),
     (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "HideFileExt", "0"),
     (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "AutoRestartShell", "1"),
@@ -141,7 +196,7 @@ _NORMAL_REGISTRY_WRITES: List[Tuple[str, str, str]] = [
 ]
 
 # Normal Windows named pipes (background OS traffic)
-_SYSTEM_PIPES: List[str] = [
+_SYSTEM_PIPES: list[str] = [
     r"\\.\pipe\svcctl",
     r"\\.\pipe\lsarpc",
     r"\\.\pipe\samr",
@@ -152,7 +207,7 @@ _SYSTEM_PIPES: List[str] = [
 ]
 
 # Normal WMI queries (administrative monitoring)
-_WMI_QUERIES: List[str] = [
+_WMI_QUERIES: list[str] = [
     "SELECT * FROM Win32_Service WHERE Name = 'Spooler'",
     "SELECT * FROM Win32_Process WHERE Name = 'svchost.exe'",
     "SELECT * FROM Win32_OperatingSystem",
@@ -162,7 +217,7 @@ _WMI_QUERIES: List[str] = [
 ]
 
 # WMI provider paths (normal activity)
-_WMI_PROVIDERS: List[Tuple[str, str]] = [
+_WMI_PROVIDERS: list[tuple[str, str]] = [
     ("CIMWin32",    r"%SystemRoot%\system32\wbem\CIMWin32.dll"),
     ("WmiApRpl",    r"%SystemRoot%\system32\wbem\WmiApRpl.dll"),
     ("MSIProv",     r"%SystemRoot%\system32\wbem\msiprov.dll"),
@@ -170,7 +225,7 @@ _WMI_PROVIDERS: List[Tuple[str, str]] = [
 ]
 
 # USB devices — realistic Indian corporate hardware
-_USB_DEVICES: List[Tuple[str, str, str, str]] = [
+_USB_DEVICES: list[tuple[str, str, str, str]] = [
     ("USB\\VID_0781&PID_5583\\0401234567AB", "SanDisk Cruzer Blade 32GB",
      "{36FC9E60-C465-11CF-8056-444553540000}", "USB"),
     ("USB\\VID_058F&PID_6387\\0987654321CD", "Transcend JetFlash 16GB",
@@ -180,7 +235,7 @@ _USB_DEVICES: List[Tuple[str, str, str, str]] = [
 ]
 
 # Rare Windows Defender threat samples
-_DEFENDER_THREATS: List[Tuple[str, str, str, str]] = [
+_DEFENDER_THREATS: list[tuple[str, str, str, str]] = [
     ("Trojan:Win32/Meterpreter.A!MTB", "Severe",   "Trojan",
      r"C:\Temp\update.exe"),
     ("HackTool:Win32/Mimikatz.A",      "Severe",   "HackTool",
@@ -192,7 +247,7 @@ _DEFENDER_THREATS: List[Tuple[str, str, str, str]] = [
 ]
 
 # PowerShell scripts per department
-_PS_SCRIPTS: Dict[str, List[Tuple[str, str]]] = {
+_PS_SCRIPTS: dict[str, list[tuple[str, str]]] = {
     "IT": [
         ("Get-ADUser -Filter * -Properties LastLogonDate | Where-Object {$_.LastLogonDate -lt (Get-Date).AddDays(-90)} | Select Name,LastLogonDate",
          r"C:\Scripts\stale-accounts.ps1"),
@@ -232,7 +287,7 @@ _PS_SCRIPTS: Dict[str, List[Tuple[str, str]]] = {
 }
 
 # Process paths (Windows)
-_PROCESS_PATHS: Dict[str, str] = {
+_PROCESS_PATHS: dict[str, str] = {
     "cmd.exe":            r"C:\Windows\System32\cmd.exe",
     "powershell.exe":     r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
     "powershell_ise.exe": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell_ise.exe",
@@ -297,22 +352,22 @@ def _user_sid(sam: str) -> str:
 
 
 def _build_cmdline(exe: str, rng: random.Random) -> str:
-    commands: Dict[str, str] = {
-        "chrome.exe":    fr"C:\Program Files\Google\Chrome\Application\chrome.exe --profile-directory=Default",
-        "OUTLOOK.EXE":   fr"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE /recycle",
-        "powershell.exe":fr"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NonInteractive -ExecutionPolicy Bypass",
-        "cmd.exe":       fr"C:\Windows\System32\cmd.exe /c dir",
-        "python.exe":    fr"C:\Python311\python.exe C:\Dev\nexovate-api\main.py",
-        "node.exe":      fr"C:\Program Files\nodejs\node.exe C:\Dev\frontend\server.js",
+    commands: dict[str, str] = {
+        "chrome.exe":    r"C:\Program Files\Google\Chrome\Application\chrome.exe --profile-directory=Default",
+        "OUTLOOK.EXE":   r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE /recycle",
+        "powershell.exe":r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NonInteractive -ExecutionPolicy Bypass",
+        "cmd.exe":       r"C:\Windows\System32\cmd.exe /c dir",
+        "python.exe":    r"C:\Python311\python.exe C:\Dev\nexovate-api\main.py",
+        "node.exe":      r"C:\Program Files\nodejs\node.exe C:\Dev\frontend\server.js",
         "git.exe":       fr"C:\Program Files\Git\cmd\git.exe {rng.choice(['pull','push','status','log --oneline'])}",
-        "code.exe":      fr"C:\Program Files\Microsoft VS Code\Code.exe C:\Dev\nexovate-api",
-        "devenv.exe":    fr"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.exe /nosplash",
+        "code.exe":      r"C:\Program Files\Microsoft VS Code\Code.exe C:\Dev\nexovate-api",
+        "devenv.exe":    r"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.exe /nosplash",
         "mstsc.exe":     fr"C:\Windows\System32\mstsc.exe /v:10.10.1.{rng.randint(10,80)}",
     }
     return commands.get(exe, _full_path(exe))
 
 
-def _select_processes(emp: Employee, rng: random.Random) -> List[str]:
+def _select_processes(emp: Employee, rng: random.Random) -> list[str]:
     dept_procs = DEPARTMENTS[emp.department].typical_processes
     n = rng.randint(3, min(len(dept_procs), 9))
     return rng.sample(dept_procs, n)
@@ -348,8 +403,8 @@ def _fake_ext_ip(domain: str) -> str:
 # ── Event container ────────────────────────────────────────────────────────────
 class LogEvent:
     """Single log event with routing tag."""
-    __slots__ = ("source", "ts", "data")
-    def __init__(self, source: str, ts: datetime, data: Dict[str, Any]):
+    __slots__ = ("data", "source", "ts")
+    def __init__(self, source: str, ts: datetime, data: dict[str, Any]):
         self.source = source
         self.ts     = ts
         self.data   = data
@@ -358,12 +413,12 @@ class LogEvent:
 class DayResult:
     """All events generated for one employee on one day."""
     def __init__(self):
-        self.events: List[LogEvent] = []
+        self.events: list[LogEvent] = []
 
-    def add(self, source: str, ts: datetime, data: Dict[str, Any]) -> None:
+    def add(self, source: str, ts: datetime, data: dict[str, Any]) -> None:
         self.events.append(LogEvent(source, ts, data))
 
-    def sorted_events(self) -> List[LogEvent]:
+    def sorted_events(self) -> list[LogEvent]:
         return sorted(self.events, key=lambda e: e.ts)
 
 
@@ -811,7 +866,7 @@ def simulate_it_admin_day(
     bus:       EventBus,
     rng:       random.Random,
     sim_start: date,
-    roster:    Optional[List[Employee]] = None,
+    roster:    list[Employee] | None = None,
 ) -> DayResult:
     """Elevated admin operations using named tiered admin account (emp.admin_sam).
     Targets real roster employees for password resets and account ops so that
@@ -920,7 +975,7 @@ def simulate_service_account_day(
 ) -> DayResult:
     """Service accounts: Type-5 logons at scheduled maintenance windows."""
     result = DayResult()
-    _SCHEDULES: Dict[str, Tuple[str, str]] = {
+    _SCHEDULES: dict[str, tuple[str, str]] = {
         "svc_sql_engine":  ("backup",          r"C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Binn\sqlservr.exe"),
         "svc_sql_agent":   ("sql_maintenance",  r"C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Binn\SQLAGENT.EXE"),
         "svc_backup":      ("backup",           r"C:\Program Files\Veeam\Backup and Replication\Backup\Veeam.Backup.Service.exe"),
@@ -991,7 +1046,7 @@ def simulate_service_account_day(
 _SERVER_EXPLORE_RATE = 0.06
 
 
-def _personal_servers(emp, dept) -> List[str]:
+def _personal_servers(emp, dept) -> list[str]:
     """The stable subset of departmental servers this person actually uses.
 
     Derived deterministically from the account name, so it is the same every day
@@ -1057,8 +1112,8 @@ def _session_source_ip(emp, sim_date: date, rng: random.Random, is_remote: bool)
 
 
 def simulate_routine_group_management(
-    it_admins: List[Employee],
-    roster:    List[Employee],
+    it_admins: list[Employee],
+    roster:    list[Employee],
     sim_date:  date,
     bus:       EventBus,
     rng:       random.Random,
@@ -1119,8 +1174,8 @@ def simulate_routine_group_management(
 
 
 def simulate_lifecycle_events(
-    it_admins: List[Employee],
-    roster:    List[Employee],
+    it_admins: list[Employee],
+    roster:    list[Employee],
     sim_date:  date,
     bus:       EventBus,
     rng:       random.Random,
@@ -1308,7 +1363,7 @@ def _emit_scheduled_task(
     logon_utc: datetime,
     logoff_utc:datetime,
 ) -> None:
-    _IT_TASKS: List[Tuple[str, str, str]] = [
+    _IT_TASKS: list[tuple[str, str, str]] = [
         (r"\NEXOVATE\IT\DiskReport",
          r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
          r"-NonInteractive -File C:\Scripts\disk-report.ps1"),

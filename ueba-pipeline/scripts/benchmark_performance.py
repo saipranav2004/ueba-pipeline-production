@@ -62,7 +62,7 @@ def measure(data_dir: str, fraction: float):
     tracemalloc.stop()
 
     t0 = time.perf_counter()
-    detections, risks = engine.score(test)
+    _detections, risks = engine.score(test)
     score_s = time.perf_counter() - t0
 
     # Per-event streaming latency over the graph-bearing events, which are the
@@ -80,7 +80,8 @@ def measure(data_dir: str, fraction: float):
 
     edges, counters = _graph_state_size(engine.graph)
 
-    import io, json
+    import json
+
     from ueba_pipeline.models.serialization import engine_to_bundle
     state, arrays = engine_to_bundle(engine)
     bundle_bytes = len(json.dumps(state).encode()) + sum(a.nbytes for a in arrays.values())

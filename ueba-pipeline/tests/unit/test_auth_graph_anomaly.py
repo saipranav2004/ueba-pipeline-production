@@ -7,7 +7,7 @@ and the projection rules (only remote logons form edges).
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,7 +31,7 @@ from ueba_pipeline.graph.auth_graph_anomaly import (
     AuthGraphConfig,
 )
 
-T0 = datetime(2025, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+T0 = datetime(2025, 1, 1, 9, 0, 0, tzinfo=UTC)
 
 
 def _logon(user, src, dst, minute=0, logon_type="3", et="4624_logon"):
@@ -176,7 +176,8 @@ def test_kerb_context_downgrade_is_scored_by_evidence_not_a_gate():
 def _dir_op_detector():
     """A directory-operation view: two busy admins and one ordinary account."""
     from ueba_pipeline.graph.auth_graph_anomaly import (
-        AuthGraphAnomalyDetector, AuthGraphConfig,
+        AuthGraphAnomalyDetector,
+        AuthGraphConfig,
     )
     d = AuthGraphAnomalyDetector(config=AuthGraphConfig(alpha=1.0))
     for src, dst in ([("admin1", "groupadd")] * 40 + [("admin1", "pwreset")] * 10
@@ -242,7 +243,7 @@ def test_proc_exec_is_keyed_on_the_identity_not_the_host():
     d = AuthGraphAnomalyDetector()
     ev = SimpleNamespace(
         event_type="sysmon_1", computer_name="DC01",
-        event_time=datetime(2025, 1, 6, tzinfo=timezone.utc),
+        event_time=datetime(2025, 1, 6, tzinfo=UTC),
         fields={"user_norm": "adm_t0_rverma", "image": r"C:\Windows\System32\ntdsutil.exe"})
     assert d.edges_for(ev) == [("proc_exec", ("adm_t0_rverma", "ntdsutil.exe"))]
 
@@ -254,7 +255,7 @@ def test_proc_exec_skips_machine_accounts():
     d = AuthGraphAnomalyDetector()
     ev = SimpleNamespace(
         event_type="sysmon_1", computer_name="DC01",
-        event_time=datetime(2025, 1, 6, tzinfo=timezone.utc),
+        event_time=datetime(2025, 1, 6, tzinfo=UTC),
         fields={"user_norm": "dc01$", "image": r"C:\Windows\System32\svchost.exe"})
     assert d.edges_for(ev) == []
 
@@ -263,7 +264,8 @@ def test_execution_and_relational_views_are_disjoint():
     """The two queues must not share a view, or the execution signal would re-enter
     the relational budget it was measured to disrupt."""
     from ueba_pipeline.graph.auth_graph_anomaly import (
-        EXECUTION_VIEWS, RELATIONAL_VIEWS,
+        EXECUTION_VIEWS,
+        RELATIONAL_VIEWS,
     )
     assert RELATIONAL_VIEWS.isdisjoint(EXECUTION_VIEWS)
     assert "proc_exec" in EXECUTION_VIEWS

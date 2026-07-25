@@ -64,8 +64,8 @@ import struct
 import urllib.request
 import zipfile
 import zlib
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Union
 
 from ueba_pipeline.parsing.normalize import NormalizedEvent, normalize_event
 
@@ -138,7 +138,7 @@ def _read_ndjson_bytes(data: bytes) -> Iterator[dict]:
                 continue                       # a truncated tail line, e.g. from a prefix
 
 
-def read_comiset_records(source: Union[str, Path]) -> Iterator[dict]:
+def read_comiset_records(source: str | Path) -> Iterator[dict]:
     """Yield raw Elasticsearch export records from a COMISET ``.zip`` or ``.json``.
 
     ``.zip`` is streamed member-by-member via the standard library (which handles
@@ -173,7 +173,7 @@ def _read_ndjson_stream(handle) -> Iterator[dict]:
                 continue
 
 
-def read_comiset_events(source: Union[str, Path],
+def read_comiset_events(source: str | Path,
                         keep_raw: bool = False) -> Iterator[NormalizedEvent]:
     """Yield NormalizedEvents from a COMISET archive, through the production parser.
 
@@ -241,7 +241,7 @@ def _iter_deflate_ndjson(read_chunk, first: bytes,
             return
 
 
-def iter_comiset_archive(path: Union[str, Path],
+def iter_comiset_archive(path: str | Path,
                          max_uncompressed_bytes: int = 1 << 62,
                          read_chunk_bytes: int = 4 << 20) -> Iterator[dict]:
     """Yield raw records from a local COMISET ``.zip`` by chunked raw inflation.
@@ -297,7 +297,7 @@ def stream_comiset_head(url: str, max_uncompressed_bytes: int = 64 * 1024 * 1024
     yield from _read_ndjson_bytes(inflated)
 
 
-def download_comiset_archive(which: str, dest_dir: Union[str, Path],
+def download_comiset_archive(which: str, dest_dir: str | Path,
                              timeout: float = 600.0) -> Path:
     """Download a full COMISET archive (``which`` in {"lab", "real"}) to ``dest_dir``.
 

@@ -23,17 +23,23 @@ Key design decisions:
 """
 
 from __future__ import annotations
-import random
+
 import hashlib
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict
-import sys
 import os
+import random
+import sys
+from dataclasses import dataclass
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config.company import (
-    DEPARTMENTS, DOMAIN_NETBIOS, EXTERNAL_DOMAIN, DOMAIN_FQDN,
-    NETWORK_RANGES, DEPT_WS_PREFIX, SERVICE_ACCOUNTS, ADMIN_ACCOUNTS,
+    ADMIN_ACCOUNTS,
+    DEPARTMENTS,
+    DEPT_WS_PREFIX,
+    DOMAIN_FQDN,
+    EXTERNAL_DOMAIN,
+    NETWORK_RANGES,
     RANDOM_SEED,
+    SERVICE_ACCOUNTS,
 )
 
 # ── First / last name pools — realistic Indian corporate demographics ─────────
@@ -96,22 +102,22 @@ class Employee:
     department:      str
     job_title:       str
     is_manager:      bool
-    manager_sam:     Optional[str]
+    manager_sam:     str | None
     workstation:     str          # e.g. WSENG07
     workstation_ip:  str
     ou_path:         str
     hire_date:       str          # YYYY-MM-DD
     is_contractor:   bool
     is_active:       bool = True
-    termination_date: Optional[str] = None
+    termination_date: str | None = None
     login_start_mean: float = 8.5
     login_start_std:  float = 1.0
     work_duration_mean: float = 8.5
     work_duration_std:  float = 1.0
     remote_fraction:    float = 0.3
-    vpn_ip:          Optional[str] = None
+    vpn_ip:          str | None = None
     # Privileged admin account SAM (if this employee has a named admin account)
-    admin_sam:       Optional[str] = None
+    admin_sam:       str | None = None
 
 
 @dataclass
@@ -187,7 +193,7 @@ def _vpn_ip(index: int, pool_size: int) -> str:
 
 def _server_ip(hostname: str) -> str:
     """Look up server IP from config."""
-    from config.company import SERVERS, DOMAIN_CONTROLLERS
+    from config.company import DOMAIN_CONTROLLERS, SERVERS
     for s in SERVERS + DOMAIN_CONTROLLERS:
         if s["hostname"] == hostname:
             return s["ip"]
@@ -208,7 +214,7 @@ def _hire_date(rng: random.Random) -> str:
 
 # Job titles per department — ordered junior → senior
 # Manager gets the LAST (most senior) title; others get sequential indices.
-JOB_TITLES: Dict[str, List[str]] = {
+JOB_TITLES: dict[str, list[str]] = {
     "Engineering":  [
         "Software Engineer I", "Software Engineer II", "Senior Software Engineer",
         "Staff Software Engineer", "Principal Engineer",
@@ -258,7 +264,7 @@ JOB_TITLES: Dict[str, List[str]] = {
 }
 
 
-def roster_to_peer_group_map(roster: List["Employee"]) -> Dict[str, str]:
+def roster_to_peer_group_map(roster: list[Employee]) -> dict[str, str]:
     """
     Projects a roster into the flat {username: peer_group} shape
     ueba_pipeline.cli.main._load_peer_groups expects (a bare `json.load`
@@ -298,7 +304,7 @@ def roster_to_peer_group_map(roster: List["Employee"]) -> Dict[str, str]:
     return mapping
 
 
-def build_employee_roster() -> List[Employee]:
+def build_employee_roster() -> list[Employee]:
     """
     Deterministically generates the complete 253-employee roster.
     Returns a list of Employee objects sorted by department then index.
@@ -314,7 +320,7 @@ def build_employee_roster() -> List[Employee]:
       5. Per-entity RNG seed: uses stable_seed() not hash().
     """
     rng = random.Random(RANDOM_SEED)
-    employees: List[Employee] = []
+    employees: list[Employee] = []
     used_sams: set = set()
     emp_id_counter = 1
     ws_counter_global = 0   # cumulative across all departments
@@ -323,7 +329,7 @@ def build_employee_roster() -> List[Employee]:
     # Build set of real_user sams that have admin accounts
     admin_real_users: set = {adm["real_user"] for adm in ADMIN_ACCOUNTS}
     # Map real_user -> highest-tier admin sam (tier 0 > 1 > 2)
-    admin_sam_by_user: Dict[str, str] = {}
+    admin_sam_by_user: dict[str, str] = {}
     for adm in sorted(ADMIN_ACCOUNTS, key=lambda a: a["tier"]):
         # lower tier number = more privileged; keep the first (lowest tier)
         if adm["real_user"] not in admin_sam_by_user:
@@ -380,7 +386,9 @@ def build_employee_roster() -> List[Employee]:
                 title = f"Contractor - {title}"
 
             # Behavioural jitter
-            jitter = lambda mu, sig: max(0.5, rng.gauss(mu, sig * 0.15))
+            def jitter(mu, sig):
+                return max(0.5, rng.gauss(mu, sig * 0.15))
+
             login_start_mean  = jitter(profile.login_start_mean, profile.login_start_std)
             login_start_std   = max(0.3, rng.gauss(profile.login_start_std, 0.1))
             work_dur_mean     = jitter(profile.work_duration_mean, profile.work_duration_std)
@@ -432,7 +440,7 @@ def build_employee_roster() -> List[Employee]:
             dept_emps[0].job_title  = titles[-1]
 
     # Second pass: assign manager_sam
-    manager_by_dept: Dict[str, str] = {}
+    manager_by_dept: dict[str, str] = {}
     for emp in employees:
         if emp.is_manager:
             manager_by_dept[emp.department] = emp.samaccountname
@@ -443,9 +451,9 @@ def build_employee_roster() -> List[Employee]:
     return employees
 
 
-def build_service_accounts() -> List[ServiceAccount]:
+def build_service_accounts() -> list[ServiceAccount]:
     """Builds service account records. OU path uses NEXOVATE (not APEXION)."""
-    records: List[ServiceAccount] = []
+    records: list[ServiceAccount] = []
     for sa in SERVICE_ACCOUNTS:
         server_ip = _server_ip(sa["server"])
         records.append(ServiceAccount(

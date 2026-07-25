@@ -39,7 +39,7 @@ budget for entity-level alerting.
 """
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 from scipy.stats import chi2
@@ -47,7 +47,7 @@ from scipy.stats import chi2
 _EPS = 1e-300
 
 
-def fisher_combine(pvalues: Sequence[float]) -> Tuple[float, float, int]:
+def fisher_combine(pvalues: Sequence[float]) -> tuple[float, float, int]:
     """Combine independent p-values. Returns (combined_p, X, df).
 
     Empty input is not significant (p = 1.0) rather than an error: an entity

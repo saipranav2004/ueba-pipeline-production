@@ -14,25 +14,25 @@ All field names verified against:
 """
 
 from __future__ import annotations
-import random
+
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, _new_guid, stable_agent_id, stable_ephemeral_id
+from core.event_bus import EventBus, stable_agent_id, stable_ephemeral_id
 from core.time_engine import utc_now_str
-from config.company import DOMAIN_NETBIOS
 
-
-_WMI_TASKS: Dict[str, str] = {
+_WMI_TASKS: dict[str, str] = {
     "5857": "WMI Activity",
     "5858": "WMI Activity",
     "5860": "WMI Activity",
     "5861": "WMI Activity",
 }
 
-_DEFENDER_TASKS: Dict[str, str] = {
+_DEFENDER_TASKS: dict[str, str] = {
     "1116": "Malware Detection",
     "1117": "Malware Remediation",
     "1118": "Malware Quarantine",
@@ -46,9 +46,9 @@ def _wmi_envelope(
     computer:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     level:      str = "information",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Winlogbeat envelope for Microsoft-Windows-WMI-Activity/Operational events.
     Provider GUID: {1418EF04-B0B4-4623-BF7E-D74AB47BBDAA}
@@ -103,7 +103,7 @@ def gen_wmi_5857(
     utc_dt:        datetime,
     bus:           EventBus,
     result_code:   str = "0x0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     WMI EID 5857 — WMI provider started.
     Verified fields from Microsoft provider XML template (neuberger6.rssing.com):
@@ -131,7 +131,7 @@ def gen_wmi_5858(
     computer:       str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     WMI EID 5858 — WMI error / operation failure.
     Verified from NXLog live JSON capture (2019-02-24):
@@ -173,7 +173,7 @@ def gen_wmi_5861(
     computer:       str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     WMI EID 5861 — WMI FilterToConsumerBinding created (permanent subscription).
     Verified from Tales of a Threat Hunter (2018-03-02) and
@@ -209,9 +209,9 @@ def _defender_envelope(
     computer:   str,
     utc_dt:     datetime,
     bus:        EventBus,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     level:      str = "warning",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Winlogbeat envelope for Windows Defender Operational events.
     Provider GUID: {11CD958A-C507-4EF3-B3F2-5FD9DFBD2C78}
@@ -268,7 +268,7 @@ def gen_defender_1116(
     bus:              EventBus,
     action_taken:     str = "0",
     threat_id:        str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Windows Defender EID 1116 — Malware detected.
     Fields inferred from Microsoft Defender event schema and Splunk
@@ -314,7 +314,7 @@ def gen_defender_1117(
     utc_dt:       datetime,
     bus:          EventBus,
     threat_id:    str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Windows Defender EID 1117 — Malware action taken (quarantine/remove/allow).
     Follows EID 1116. Action ID: 2=Quarantine, 3=Remove, 6=Allow.
@@ -350,7 +350,7 @@ def gen_defender_5007(
     computer:      str,
     utc_dt:        datetime,
     bus:           EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Windows Defender EID 5007 — Configuration changed.
     Verified from neuberger6.rssing.com blog (2017-10-16):

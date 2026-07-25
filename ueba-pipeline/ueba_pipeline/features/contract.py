@@ -39,9 +39,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
-from typing import Dict, List, Mapping
+from enum import StrEnum
 
 from ueba_pipeline.features.aggregate import (
     _GROUP_EXTRACTORS,
@@ -55,7 +55,7 @@ from ueba_pipeline.features.manifest import CapabilityManifest
 FEATURE_CONTRACT_VERSION = "1.0.0"
 
 
-class FeatureKind(str, Enum):
+class FeatureKind(StrEnum):
     """What a feature's value represents. Drives interpretation, not arithmetic."""
 
     COUNT = "count"                # unbounded non-negative event tally
@@ -184,7 +184,7 @@ def spec_for(name: str) -> FeatureSpec:
     )
 
 
-def build_contract(manifest: CapabilityManifest) -> List[FeatureSpec]:
+def build_contract(manifest: CapabilityManifest) -> list[FeatureSpec]:
     """Every feature available under ``manifest``, in the vector's column order.
 
     The order is the extractors' own deterministic ordering, so a contract and a
@@ -193,13 +193,13 @@ def build_contract(manifest: CapabilityManifest) -> List[FeatureSpec]:
     return [spec_for(name) for name in feature_order_for_manifest(manifest)]
 
 
-def model_feature_names(manifest: CapabilityManifest) -> List[str]:
+def model_feature_names(manifest: CapabilityManifest) -> list[str]:
     """The ordered columns a model may consume. This is the ONLY supported way to
     select model input; selecting columns by hand bypasses the exclusions above."""
     return [s.name for s in build_contract(manifest) if s.model_eligible]
 
 
-def quarantined_feature_names(manifest: CapabilityManifest) -> List[str]:
+def quarantined_feature_names(manifest: CapabilityManifest) -> list[str]:
     """Features computed and shown to analysts but withheld from every model."""
     return [s.name for s in build_contract(manifest) if not s.model_eligible]
 
@@ -222,7 +222,7 @@ def contract_hash(manifest: CapabilityManifest) -> str:
     return f"{FEATURE_CONTRACT_VERSION}+{digest}"
 
 
-def validate(manifest: CapabilityManifest) -> Dict[str, List[str]]:
+def validate(manifest: CapabilityManifest) -> dict[str, list[str]]:
     """Check the contract still describes what the extractors emit.
 
     Returns a summary for logging. Raises ``ValueError`` if a feature cannot be

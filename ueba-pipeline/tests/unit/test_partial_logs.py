@@ -12,10 +12,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ueba_pipeline.parsing.normalize import normalize_event
-from ueba_pipeline.features.manifest import build_capability_manifest
-from ueba_pipeline.features.aggregate import feature_order_for_manifest
 from ueba_pipeline.config.schema import CapabilityConfig
+from ueba_pipeline.features.aggregate import feature_order_for_manifest
+from ueba_pipeline.features.manifest import build_capability_manifest
+from ueba_pipeline.parsing.normalize import normalize_event
 
 
 def _security_4624(i):

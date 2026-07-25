@@ -12,7 +12,7 @@ here rather than in a benchmark nobody re-derives.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -21,7 +21,7 @@ from ueba_pipeline.features.aggregate import build_user_windows
 from ueba_pipeline.features.manifest import build_capability_manifest
 from ueba_pipeline.parsing.normalize import NormalizedEvent
 
-BASE = datetime(2025, 3, 3, 9, 0, tzinfo=timezone.utc)
+BASE = datetime(2025, 3, 3, 9, 0, tzinfo=UTC)
 
 
 def _event(event_type: str, offset_minutes: int, **fields) -> NormalizedEvent:

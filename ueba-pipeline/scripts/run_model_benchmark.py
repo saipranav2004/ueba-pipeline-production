@@ -20,8 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ueba_pipeline.evaluation.model_benchmark import (
-    aggregate, build_window_dataset, evaluate_graph_reference,
-    graph_reference_scores, render, run_protocol,
+    aggregate,
+    build_window_dataset,
+    evaluate_graph_reference,
+    graph_reference_scores,
+    render,
+    run_protocol,
 )
 
 PROTOCOLS = ["temporal", "entity_disjoint", "entity_and_time_disjoint",

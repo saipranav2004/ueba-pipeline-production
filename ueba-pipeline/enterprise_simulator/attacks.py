@@ -23,22 +23,28 @@ never mixed into the regular log streams, so a consumer can ignore it entirely
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
-from core.employees import Employee, user_sid as _user_sid, stable_seed
-from core.event_bus import EventBus
+from core.daily_simulation import _CIFS_SPNS
+from core.employees import Employee
+from core.employees import user_sid as _user_sid
+from core.event_bus import EventBus, ProcessRecord
 from core.time_engine import _float_hour_to_datetime, local_to_utc, utc_now_str
 from generators.security_generator import (
-    gen_4624, gen_4625, gen_4662, gen_4768, gen_4769, gen_4771, gen_4776,
+    gen_4624,
+    gen_4625,
+    gen_4662,
+    gen_4768,
+    gen_4769,
+    gen_4771,
+    gen_4776,
     gen_group_change,
 )
 from generators.sysmon_generator import gen_eid1, gen_eid10
-from core.event_bus import ProcessRecord
-from core.daily_simulation import _CIFS_SPNS
 
-InjectedEvents = List[Tuple[str, datetime, Dict[str, Any]]]
+InjectedEvents = list[tuple[str, datetime, dict[str, Any]]]
 
 
 @dataclass
@@ -47,17 +53,17 @@ class AttackLabel:
     mitre_technique: str
     start_time: str
     end_time: str
-    target_users: List[str]
+    target_users: list[str]
     source_ip: str
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 def inject_pass_the_hash(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates lateral movement via a stolen NTLM hash: the victim's
     credentials authenticate from a workstation they have never used,
@@ -116,11 +122,11 @@ def inject_pass_the_hash(
 
 
 def inject_kerberoasting(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates requesting service tickets for every SPN in the domain to
     harvest RC4-encrypted tickets for offline cracking. Targets a real SPN and forces enc_type
@@ -140,7 +146,7 @@ def inject_kerberoasting(
     events: InjectedEvents = []
     ts = start_ts
     requested_spns = []
-    for hostname, (spn, spn_sid) in targets:
+    for _hostname, (spn, spn_sid) in targets:
         ts = ts + timedelta(seconds=rng.randint(2, 8))  # rapid, not human-paced
         event = gen_4769(
             attacker.samaccountname, spn, spn_sid, attacker.workstation_ip,
@@ -168,11 +174,11 @@ def inject_kerberoasting(
 
 
 def inject_password_spray(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates a low-and-slow password spray: one password guessed against
     many distinct real accounts from a single source IP, relying on
@@ -221,11 +227,11 @@ def inject_password_spray(
 
 
 def inject_dcsync(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates a DCSync attack (T1003.006): a non-DC account requests
     directory replication, triggering event 4662 with the Replicating
@@ -261,7 +267,7 @@ def inject_dcsync(
     dcsync_ts = attack_ts + timedelta(seconds=2)
     dcsync_event = gen_4662(
         actor_session=session,
-        object_dn=f"DC=nexovate,DC=local",
+        object_dn="DC=nexovate,DC=local",
         utc_dt=dcsync_ts,
         bus=bus,
         is_dcsync=True,
@@ -290,11 +296,11 @@ def inject_dcsync(
 
 
 def inject_asrep_roasting(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates AS-REP Roasting (T1558.004): requests a TGT for a user
     with pre-authentication disabled, generating a 4768 with PreAuthType=0
@@ -339,11 +345,11 @@ def inject_asrep_roasting(
 
 
 def inject_lsass_dump(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates LSASS memory dumping (T1003.001) via comsvcs.dll MiniDump.
     Detection signature: Sysmon EID 10 (ProcessAccess) targeting lsass.exe
@@ -420,11 +426,11 @@ def inject_lsass_dump(
 
 
 def inject_golden_ticket(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates a Golden Ticket (T1558.001): a forged TGT using the krbtgt
     hash, allowing domain-wide impersonation. The key detection signature is
@@ -476,11 +482,11 @@ def inject_golden_ticket(
 
 
 def inject_silver_ticket(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates a Silver Ticket (T1558.002): a forged TGS for a specific
     service (e.g. CIFS/SQL), using a service account's hash. The detection
@@ -530,11 +536,11 @@ def inject_silver_ticket(
 
 
 def inject_ntds_dump(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates NTDS.dit extraction (T1003.003) via volume shadow copy +
     ntdsutil. Detection signature: process creation (4688/Sysmon EID 1)
@@ -609,11 +615,11 @@ def inject_ntds_dump(
 
 
 def inject_account_manipulation(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """
     Simulates Account Manipulation (T1098) — adding a compromised user to
     a privileged security group (Domain Admins). Detection signature:
@@ -683,11 +689,11 @@ def inject_account_manipulation(
 
 
 def inject_insider_data_staging(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """An authorised user collecting data at far above their normal rate.
 
     This is the threat class the credential-theft techniques do not cover:
@@ -743,11 +749,11 @@ def inject_insider_data_staging(
 
 
 def inject_nhi_schedule_hijack(
-    roster: List[Employee],
+    roster: list[Employee],
     bus: EventBus,
     sim_date: date,
     rng: random.Random,
-) -> Tuple[InjectedEvents, AttackLabel]:
+) -> tuple[InjectedEvents, AttackLabel]:
     """A compromised service-account credential used outside its schedule.
 
     The non-human-identity equivalent of insider abuse, and the class the

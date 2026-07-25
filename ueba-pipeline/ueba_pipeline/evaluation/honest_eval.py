@@ -60,11 +60,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
-
-import numpy as np
 
 from ueba_pipeline.config.schema import load_config
 from ueba_pipeline.engine import BehavioralEngine, EngineConfig, _event_key, is_graph_event
@@ -93,10 +91,10 @@ class DetectionResult:
     contamination: str
     n_test_attacks: int
     detected: int
-    per_attack: Dict[str, bool]
+    per_attack: dict[str, bool]
     n_alert_entities: int
     n_fp_entities: int
-    fp_entities: List[str]
+    fp_entities: list[str]
     alerts_per_day: float
     test_days: float
     n_test_windows: int
@@ -105,7 +103,7 @@ class DetectionResult:
 def _load(data_dir: str):
     events = [e for e in FileEventSource.from_directory(data_dir).read() if e.event_time]
     events.sort(key=lambda e: e.event_time)
-    labels = [json.loads(l) for l in open(f"{data_dir}/attack_labels.jsonl")]
+    labels = [json.loads(line) for line in open(f"{data_dir}/attack_labels.jsonl")]
     for a in labels:
         a["_s"], a["_e"] = _pt(a["start_time"]), _pt(a["end_time"])
     return events, labels
@@ -154,7 +152,7 @@ def _evaluate_detections(eng, detections, test_attacks, test_days, n_test_window
     # to an alert driven by day-1 behaviour.
     peak_hour = {r.entity: r.top_hour for r in alerts}
 
-    per_attack: Dict[str, bool] = {}
+    per_attack: dict[str, bool] = {}
     attributed_entities = set()
     for a in test_attacks:
         princ = attack_principals(a)
@@ -182,7 +180,7 @@ def _evaluate_detections(eng, detections, test_attacks, test_days, n_test_window
 
 
 def evaluate(data_dir: str, train_fraction: float = 0.60,
-             contamination: str = "oracle") -> List[DetectionResult]:
+             contamination: str = "oracle") -> list[DetectionResult]:
     cfg = load_config()
     events, labels = _load(data_dir)
     t0, t1 = events[0].event_time, events[-1].event_time

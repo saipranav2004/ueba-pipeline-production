@@ -50,7 +50,6 @@ from __future__ import annotations
 import bisect
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 
 # Logon types that bind a user to a host for the purpose of owning the processes
 # on it. 2 = interactive (console), 10 = remote interactive (RDP), 7 = unlock,
@@ -68,11 +67,11 @@ class SessionResolver:
 
     session_ttl_hours: float = DEFAULT_SESSION_TTL_HOURS
     # host -> ascending list of (logon_time, account)
-    _logons: Dict[str, List[Tuple[datetime, str]]] = field(default_factory=dict)
+    _logons: dict[str, list[tuple[datetime, str]]] = field(default_factory=dict)
 
-    def fit(self, events, norm) -> "SessionResolver":
+    def fit(self, events, norm) -> SessionResolver:
         """Index every session-binding logon in ``events``. O(n log n)."""
-        acc: Dict[str, List[Tuple[datetime, str]]] = {}
+        acc: dict[str, list[tuple[datetime, str]]] = {}
         for e in events:
             if e.event_time is None or e.event_type != "4624":
                 continue
@@ -86,7 +85,7 @@ class SessionResolver:
         self._logons = {h: sorted(v) for h, v in acc.items()}
         return self
 
-    def resolve(self, host: str, when: datetime) -> Optional[str]:
+    def resolve(self, host: str, when: datetime) -> str | None:
         """Account owning ``host`` at ``when``, or None if unknown/expired."""
         sessions = self._logons.get(host)
         if not sessions or when is None:

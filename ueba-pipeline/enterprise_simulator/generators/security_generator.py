@@ -11,21 +11,25 @@ Every event dict is self-consistent:
 """
 
 from __future__ import annotations
-import random
+
 import hashlib
+import os
+import random
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-import sys, os
+from typing import Any
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.event_bus import EventBus, LogonSession, _new_guid, stable_agent_id, stable_ephemeral_id
-from core.employees import user_sid as _user_sid, stable_seed as _stable_seed
-from core.time_engine import utc_now_str, jitter_ts
 from config.company import (
-    DOMAIN_NETBIOS, DOMAIN_FQDN, EXTERNAL_DOMAIN,
     DOMAIN_CONTROLLERS,
+    DOMAIN_FQDN,
+    DOMAIN_NETBIOS,
 )
-
+from core.employees import stable_seed as _stable_seed
+from core.employees import user_sid as _user_sid
+from core.event_bus import EventBus, LogonSession, stable_agent_id, stable_ephemeral_id
+from core.time_engine import utc_now_str
 
 # ── Shared field value maps ───────────────────────────────────────────────────
 _LOGON_TYPE_NAMES = {
@@ -64,9 +68,9 @@ def _envelope(
     outcome: str,
     utc_dt: datetime,
     bus: EventBus,
-    keywords: List[str],
-    event_data: Dict[str, Any],
-) -> Dict[str, Any]:
+    keywords: list[str],
+    event_data: dict[str, Any],
+) -> dict[str, Any]:
     """
     Builds the full Winlogbeat Kafka JSON envelope.
     Structure verified from kafka_logs_2.txt (DC01.das.com, Winlogbeat 9.4.2).
@@ -134,7 +138,7 @@ def gen_4624(
     utc_dt:  datetime,
     bus:     EventBus,
     target_user_sid: str = "S-1-0-0",  # callers must supply real per-user SID
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generates a 4624 Successful Logon event.
     ImpersonationLevel is string-decoded (Winlogbeat decodes %%1840 → 'Impersonation').
@@ -206,7 +210,7 @@ def gen_4634(
     session: LogonSession,
     utc_dt:  datetime,
     bus:     EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4634 Logoff — references the TargetLogonId from the paired 4624."""
     event_data = {
         "TargetUserSid":    _user_sid(session.samaccountname),
@@ -239,7 +243,7 @@ def gen_4625(
     sub_status:     str = "0xc000006a",     # wrong password
     auth_package:   str = "NTLM",
     workstation:    str = "-",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4625 Logon Failure."""
     _FAILURE_REASONS = {
         "0xc000006a": "Unknown user name or bad password.",
@@ -290,7 +294,7 @@ def gen_4672(
     utc_dt:  datetime,
     bus:     EventBus,
     privilege_list: str = "SeSecurityPrivilege\nSeTakeOwnershipPrivilege\nSeLoadDriverPrivilege\nSeBackupPrivilege\nSeRestorePrivilege\nSeDebugPrivilege",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4672 Special Logon — emitted alongside 4624 for privileged sessions."""
     event_data = {
         "SubjectUserSid":    _user_sid(session.samaccountname),
@@ -319,7 +323,7 @@ def gen_4648(
     target_server:  str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4648 — RunAs / PSCredential / WMI explicit credential use."""
     event_data = {
         "SubjectUserSid":      "S-1-5-18",
@@ -430,13 +434,13 @@ def _account_supported_enc_type(identity_key: str, computer_backed: bool = True)
     seed = _stable_seed(_ENC_TYPE_ASSIGNMENT_SEED, f"enctype:{identity_key}")
     local_rng = random.Random(seed)
     table = _COMPUTER_BACKED_SPN_ENC_TYPES if computer_backed else _KERBEROS_ENC_TYPES
-    vals, wts = zip(*table)
+    vals, wts = zip(*table, strict=True)
     return local_rng.choices(list(vals), weights=list(wts), k=1)[0]
 
 
 def _pick_ticket_options(rng, for_tgt=True):
     pool = _KERBEROS_TGT_TICKET_OPTIONS if for_tgt else _KERBEROS_TGS_TICKET_OPTIONS
-    vals, wts = zip(*pool)
+    vals, wts = zip(*pool, strict=True)
     return rng.choices(list(vals), weights=list(wts), k=1)[0]
 
 
@@ -447,10 +451,10 @@ def gen_4768(
     utc_dt:         datetime,
     bus:            EventBus,
     pre_auth_type:  str = "2",
-    enc_type:       Optional[str] = None,
+    enc_type:       str | None = None,
     status:         str = "0x0",
     logon_guid:     str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4768 Kerberos AS-REQ — only generated on Domain Controllers.
 
     EncryptionType is a deterministic per-account property, not a per-request
@@ -515,11 +519,11 @@ def gen_4769(
     src_ip:         str,
     utc_dt:         datetime,
     bus:            EventBus,
-    enc_type:       Optional[str] = None,
+    enc_type:       str | None = None,
     ticket_options: str = "0x40800000",
     status:         str = "0x0",
     logon_guid:     str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4769 Kerberos TGS-REQ — only generated on Domain Controllers.
 
     TicketEncryptionType is looked up deterministically per target SPN
@@ -570,7 +574,7 @@ def gen_4771(
     utc_dt:         datetime,
     bus:            EventBus,
     status:         str = "0x18",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4771 Kerberos pre-authentication failure (wrong password)."""
     computer = DC01["fqdn"]
     event_data = {
@@ -605,7 +609,7 @@ def gen_4776(
     bus:            EventBus,
     status:         str = "0x0",
     computer:       str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4776 NTLM validation — generated on DC for domain accounts."""
     if not computer:
         computer = DC01["fqdn"]
@@ -634,7 +638,7 @@ def gen_4740(
     caller_computer:str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4740 Account locked out after too many failed attempts."""
     computer = DC01["fqdn"]
     event_data = {
@@ -669,7 +673,7 @@ def gen_group_change(
     utc_dt:         datetime,
     bus:            EventBus,
     event_id:       str = "4728",   # 4728=global, 4732=local, 4756=universal
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Group member added — 4728 (global), 4732 (local), 4756 (universal)."""
     task_names = {
         "4728": "Security Group Management",
@@ -708,7 +712,7 @@ def gen_4720(
     new_user_dn:    str,
     utc_dt:         datetime,
     bus:            EventBus,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4720 — A new user account was created."""
     event_data = {
         "SubjectUserSid":    _user_sid(actor_session.samaccountname),
@@ -751,12 +755,12 @@ def gen_4662(
     utc_dt:        datetime,
     bus:           EventBus,
     is_dcsync:     bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """4662 AD object access — legitimate admin or DCSync variant."""
     if is_dcsync:
         props = (
             "%%{19195a5b-6da0-11d0-a285-00aa003049e2}\n"
-            f"%%{{1131f6ad-9c07-11d1-f79f-00c04fc2dcd2}}"
+            "%%{1131f6ad-9c07-11d1-f79f-00c04fc2dcd2}"
         )
     else:
         props = "%%{19195a5b-6da0-11d0-a285-00aa003049e2}"
@@ -793,7 +797,7 @@ def gen_4662(
 # ── 5136 — AD Attribute Modified ─────────────────────────────────────────────
 # Verified AD schema class GUIDs (stable per schema version):
 # Source: Microsoft Active Directory Schema technical reference
-_AD_SCHEMA_GUIDS: Dict[str, str] = {
+_AD_SCHEMA_GUIDS: dict[str, str] = {
     "user":               "{BF967ABA-0DE6-11D0-A285-00AA003049E2}",
     "computer":           "{BF967A86-0DE6-11D0-A285-00AA003049E2}",
     "group":              "{BF967A9C-0DE6-11D0-A285-00AA003049E2}",
@@ -812,7 +816,7 @@ def gen_5136(
     utc_dt:          datetime,
     bus:             EventBus,
     operation:       str = "Value Added",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """5136 — Directory Service object attribute modification."""
     event_data = {
         "SubjectUserSid":           _user_sid(actor_session.samaccountname),

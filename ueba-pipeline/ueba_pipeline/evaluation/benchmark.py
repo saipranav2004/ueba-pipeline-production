@@ -13,8 +13,8 @@ graph learning, vs ~0.72 TPR / 4.4% FPR for the best non-graph ML. King & Huang
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -87,12 +87,12 @@ def _roc_auc(scores: np.ndarray, labels: np.ndarray, target_fpr: float):
 
 
 def lanl_roc_eval(
-    events: List,
+    events: list,
     is_malicious: Callable[[object], bool],
     train_fraction: float = 0.5,
     contamination: str = "oracle",
     target_fpr: float = 0.009,
-    config: Optional[AuthGraphConfig] = None,
+    config: AuthGraphConfig | None = None,
 ) -> RocResult:
     """Causal, per-authentication ROC of the production graph detector.
 
@@ -111,7 +111,8 @@ def lanl_roc_eval(
         if contamination == "oracle" and is_malicious(e):
             continue
         det.observe_baseline(e)
-    nulls = _fit_view_nulls(det, [e for e in train if not (contamination == "oracle" and is_malicious(e))])
+    nulls = _fit_view_nulls(
+        det, [e for e in train if not (contamination == "oracle" and is_malicious(e))])
 
     scores, labels = [], []
     t0 = time.perf_counter()

@@ -17,7 +17,9 @@ import os
 import pytest
 
 from ueba_pipeline.evaluation.comiset_adapter import (
-    comiset_source_to_raw, read_comiset_events, stream_comiset_head,
+    comiset_source_to_raw,
+    read_comiset_events,
+    stream_comiset_head,
 )
 from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector
 
@@ -72,7 +74,8 @@ _SECURITY_4624 = {
         "TargetUserName": "jsmith", "TargetDomainName": "PHOENIX",
         "logon_type": "3", "WorkstationName": "WS-JSMITH",
         "AuthenticationPackageName": "Kerberos",
-        "z_elastic_ecs": {"event": {"code": "4624", "provider": "Microsoft-Windows-Security-Auditing"}},
+        "z_elastic_ecs": {"event": {
+            "code": "4624", "provider": "Microsoft-Windows-Security-Auditing"}},
     },
 }
 # Real COMISET Sysmon-10 field names: SourceImage/TargetImage are renamed by HELK

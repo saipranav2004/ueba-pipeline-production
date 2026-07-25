@@ -23,6 +23,7 @@ Usage:
 """
 
 from __future__ import annotations
+
 import argparse
 import csv
 import json
@@ -33,8 +34,8 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import asdict
-from datetime import datetime, date
-from typing import List, Dict, Any
+from datetime import date
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -48,22 +49,28 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from config.company import RANDOM_SEED, SIM_START_DATE, DEPARTMENTS, ADMIN_ACCOUNTS
-from core.employees import (build_employee_roster, build_service_accounts,
-                             stable_seed, roster_to_peer_group_map)
-from core.event_bus import EventBus
 from attacks import ATTACK_REGISTRY, HEADLINE_ATTACKS, AttackLabel
-from core.time_engine import (
-    all_sim_dates, is_business_day, parse_date, AbsenceCalendar,
-)
+from config.company import ADMIN_ACCOUNTS, DEPARTMENTS, RANDOM_SEED, SIM_START_DATE
 from core.daily_simulation import (
+    simulate_defender_event,
     simulate_employee_day,
-    simulate_service_account_day,
     simulate_it_admin_day,
     simulate_lifecycle_events,
     simulate_routine_group_management,
-    simulate_defender_event,
-    DayResult,
+    simulate_service_account_day,
+)
+from core.employees import (
+    build_employee_roster,
+    build_service_accounts,
+    roster_to_peer_group_map,
+    stable_seed,
+)
+from core.event_bus import EventBus
+from core.time_engine import (
+    AbsenceCalendar,
+    all_sim_dates,
+    is_business_day,
+    parse_date,
 )
 
 # SimulatorConfig integration: department behavioral overrides can be
@@ -76,7 +83,7 @@ from core.daily_simulation import (
 # ── Output directories ────────────────────────────────────────────────────────
 BASE_OUTPUT = os.path.join(os.path.dirname(__file__), "output")
 
-SOURCE_DIRS: Dict[str, str] = {
+SOURCE_DIRS: dict[str, str] = {
     "security":       os.path.join(BASE_OUTPUT, "security_logs"),
     "sysmon":         os.path.join(BASE_OUTPUT, "sysmon_logs"),
     "dns":            os.path.join(BASE_OUTPUT, "dns_logs"),
@@ -89,7 +96,7 @@ SOURCE_DIRS: Dict[str, str] = {
 }
 
 # ── CSV field schemas — flattened view per source ─────────────────────────────
-CSV_FIELDS: Dict[str, List[str]] = {
+CSV_FIELDS: dict[str, list[str]] = {
     "security": [
         "timestamp", "event_id", "computer", "channel", "outcome", "task",
         "target_user_name", "subject_user_name", "target_domain",
@@ -164,13 +171,13 @@ def _csv_path(source: str, week_num: int) -> str:
     return os.path.join(SOURCE_DIRS["csv"], f"{source}_week{week_num:02d}.csv")
 
 
-def _flatten_event(source: str, ev: Dict[str, Any]) -> Dict[str, Any]:
+def _flatten_event(source: str, ev: dict[str, Any]) -> dict[str, Any]:
     """Flatten a nested Winlogbeat JSON event to a CSV-ready dict."""
     winlog = ev.get("winlog", {})
     ed     = winlog.get("event_data", {})
     emeta  = ev.get("event", {})
 
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "timestamp":  ev.get("@timestamp", ""),
         "event_id":   winlog.get("event_id", ""),
         "computer":   winlog.get("computer_name", ""),
@@ -289,9 +296,9 @@ class WeeklyCSVWriter:
     """Accumulates events per source per week, writes CSV at week boundary."""
 
     def __init__(self):
-        self._rows: Dict[str, List[Dict]] = defaultdict(list)
+        self._rows: dict[str, list[dict]] = defaultdict(list)
 
-    def add(self, source: str, ev_data: Dict[str, Any]) -> None:
+    def add(self, source: str, ev_data: dict[str, Any]) -> None:
         if source == "kafka":
             return
         self._rows[source].append(_flatten_event(source, ev_data))
@@ -315,11 +322,11 @@ class JSONLWriter:
     """Buffers and writes JSONL files; reuses file handles across calls."""
 
     def __init__(self, buffer_size: int = 500):
-        self._handles: Dict[str, Any] = {}
-        self._buf:     Dict[str, List[str]] = defaultdict(list)
+        self._handles: dict[str, Any] = {}
+        self._buf:     dict[str, list[str]] = defaultdict(list)
         self._buf_size = buffer_size
 
-    def write(self, path: str, event: Dict[str, Any]) -> None:
+    def write(self, path: str, event: dict[str, Any]) -> None:
         self._buf[path].append(json.dumps(event, default=str))
         if len(self._buf[path]) >= self._buf_size:
             self._flush_path(path)
@@ -424,7 +431,7 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
     # a centrality blend that no longer sums to 1. The simulator already knows
     # which hosts are DCs and which accounts are privileged; not emitting that
     # was the gap. See graph/identity_graph.py.
-    from config.company import ADMIN_ACCOUNTS, DOMAIN_CONTROLLERS, SERVERS
+    from config.company import DOMAIN_CONTROLLERS, SERVERS
     directory_path = os.path.join(BASE_OUTPUT, "directory.json")
     with open(directory_path, "w") as f:
         # Shape must match what build_identity_graph_from_roster consumes:
@@ -465,14 +472,14 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
     print()
 
     # Per-entity seeded RNGs — isolated so entity A's events don't affect B
-    emp_rngs:  Dict[str, random.Random] = {}
-    emp_cals:  Dict[str, AbsenceCalendar] = {}
+    emp_rngs:  dict[str, random.Random] = {}
+    emp_cals:  dict[str, AbsenceCalendar] = {}
     for emp in roster:
         er = random.Random(stable_seed(seed, emp.samaccountname))
         emp_rngs[emp.samaccountname] = er
         emp_cals[emp.samaccountname] = AbsenceCalendar(er, emp.samaccountname)
 
-    svc_rngs: Dict[str, random.Random] = {
+    svc_rngs: dict[str, random.Random] = {
         svc.samaccountname: random.Random(stable_seed(seed, svc.samaccountname))
         for svc in sas
     }
@@ -488,8 +495,8 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
     # (non-attack) traffic -- turning this flag on adds events, it does not
     # perturb anything else.
     attack_rng = random.Random(seed ^ 0xA77ACC)
-    attack_schedule: Dict[date, List[str]] = defaultdict(list)
-    attack_labels: List[AttackLabel] = []
+    attack_schedule: dict[date, list[str]] = defaultdict(list)
+    attack_labels: list[AttackLabel] = []
     if inject_attacks:
         # "all"      -> every registered attack (eleven; includes the insider
         #               data-staging corpus measured separately from the headline).
@@ -580,14 +587,14 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
 
     jsonl   = JSONLWriter(buffer_size=500)
     csv_w   = WeeklyCSVWriter()
-    skipped_days: List[str] = []   # employee-days lost to a generator fault
+    skipped_days: list[str] = []   # employee-days lost to a generator fault
 
     total_events = 0
-    week_of: Dict[date, int] = {d: (i // 5 + 1) for i, d in enumerate(biz_days)}
+    week_of: dict[date, int] = {d: (i // 5 + 1) for i, d in enumerate(biz_days)}
     t0 = time.time()
 
     for day_idx, sim_date in enumerate(all_sim):
-        day_events: List[tuple] = []
+        day_events: list[tuple] = []
         week_num   = week_of.get(sim_date, 0)  # 0 for weekends/holidays
 
         # ── Employee workdays ──────────────────────────────────────────────
@@ -693,7 +700,7 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
 
         # ── Write events ───────────────────────────────────────────────────
         kafka_path = _kafka_path(sim_date)
-        for source, ts, ev_data in day_events:
+        for source, _ts, ev_data in day_events:
             # Per-source JSONL
             jsonl.write(_jsonl_path(source, sim_date), ev_data)
             # Kafka combined JSONL (all sources, timestamped, source-tagged)
@@ -714,7 +721,7 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
             elapsed = time.time() - t0
             rate    = total_events / max(elapsed, 0.01)
             print(f"  Day {day_idx+1:2d}/{len(biz_days)} [{sim_date}]  "
-                  f"IST business hours 09:00–18:30  "
+                  f"IST business hours 09:00-18:30  "
                   f"events={len(day_events):5d}  "
                   f"total={total_events:7,d}  "
                   f"elapsed={elapsed:.1f}s  "
@@ -731,7 +738,7 @@ def run(max_days: int = 9999, seed: int = RANDOM_SEED, quiet: bool = False,
 
     print()
     print("=" * 62)
-    print(f"  Simulation complete.")
+    print("  Simulation complete.")
     print(f"  Total events generated:  {total_events:,}")
     if skipped_days:
         # Always reported, including under --quiet: a partial dataset must never
@@ -792,7 +799,7 @@ if __name__ == "__main__":
 
     if args.headcount_scale != 1.0:
         for dept in DEPARTMENTS.values():
-            dept.headcount = max(1, int(round(dept.headcount * args.headcount_scale)))
+            dept.headcount = max(1, round(dept.headcount * args.headcount_scale))
         total = sum(d.headcount for d in DEPARTMENTS.values())
         if not args.quiet:
             print(f"  headcount scaled by {args.headcount_scale}x -> {total} employees")

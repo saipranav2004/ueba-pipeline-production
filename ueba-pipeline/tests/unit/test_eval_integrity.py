@@ -8,13 +8,10 @@ and expensive to lose.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
-import numpy as np
-import pytest
-
-from ueba_pipeline.engine import EngineConfig, BehavioralEngine
+from ueba_pipeline.engine import BehavioralEngine
 from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphConfig
 
 
@@ -41,7 +38,6 @@ def test_absorb_threshold_is_reachable():
     if the threshold sits inside the achievable score range: surprise is
     unbounded above and the threshold is expressed in the same nats, so a
     sufficiently anomalous edge always trips it."""
-    from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphConfig
     cfg = AuthGraphConfig()
     assert not hasattr(cfg, "novelty_weight"), "the constant novelty score must be gone"
     assert cfg.absorb_surprise > 0, "absorb threshold must exist in surprise units"
@@ -57,7 +53,8 @@ def test_engine_calibrates_nulls_on_training_data_only():
     nulls must be frozen at fit time and score() must never recalibrate or see
     labels."""
     import inspect
-    fit_src = inspect.getsource(BehavioralEngine.fit) + inspect.getsource(BehavioralEngine._fit_graph)
+    fit_src = (inspect.getsource(BehavioralEngine.fit)
+               + inspect.getsource(BehavioralEngine._fit_graph))
     assert "_graph_nulls" in fit_src
     score_src = inspect.getsource(BehavioralEngine.score)
     for leak in ("label", "attack", "EmpiricalPValue().fit", "_graph_nulls ="):
@@ -106,17 +103,18 @@ def test_host_scoped_telemetry_resolves_into_the_identity_space():
     real users. Resolving the logged-on owner keeps one population. An
     unattributable event keeps the host rather than being dropped.
     """
-    from ueba_pipeline.graph.sessions import SessionResolver
     from ueba_pipeline.engine import BehavioralEngine
+    from ueba_pipeline.graph.sessions import SessionResolver
 
     eng = BehavioralEngine()
     host_event = SimpleNamespace(
-        event_type="sysmon_10", event_time=datetime(2025, 1, 1, 10, tzinfo=timezone.utc),
+        event_type="sysmon_10", event_time=datetime(2025, 1, 1, 10, tzinfo=UTC),
         computer_name="ws01", fields={},
     )
     sessions = SessionResolver()
-    sessions._logons = {"ws01": [(datetime(2025, 1, 1, 9, tzinfo=timezone.utc), "alice")]}
-    assert eng._entity_for(host_event, sessions) == "alice", "host telemetry must resolve to an identity"
+    sessions._logons = {"ws01": [(datetime(2025, 1, 1, 9, tzinfo=UTC), "alice")]}
+    assert eng._entity_for(host_event, sessions) == "alice", \
+        "host telemetry must resolve to an identity"
     # No session -> keep the host rather than dropping the event.
     assert eng._entity_for(host_event, SessionResolver()) == "ws01"
 
@@ -125,9 +123,9 @@ def test_session_resolution_is_causal_and_expires():
     from ueba_pipeline.graph.sessions import SessionResolver
 
     r = SessionResolver(session_ttl_hours=12.0)
-    r._logons = {"ws01": [(datetime(2025, 1, 1, 9, tzinfo=timezone.utc), "alice")]}
+    r._logons = {"ws01": [(datetime(2025, 1, 1, 9, tzinfo=UTC), "alice")]}
     # before the logon -> unknown, never look ahead
-    assert r.resolve("ws01", datetime(2025, 1, 1, 8, tzinfo=timezone.utc)) is None
-    assert r.resolve("ws01", datetime(2025, 1, 1, 10, tzinfo=timezone.utc)) == "alice"
+    assert r.resolve("ws01", datetime(2025, 1, 1, 8, tzinfo=UTC)) is None
+    assert r.resolve("ws01", datetime(2025, 1, 1, 10, tzinfo=UTC)) == "alice"
     # past the TTL -> expired rather than silently stale
-    assert r.resolve("ws01", datetime(2025, 1, 2, 9, tzinfo=timezone.utc)) is None
+    assert r.resolve("ws01", datetime(2025, 1, 2, 9, tzinfo=UTC)) is None

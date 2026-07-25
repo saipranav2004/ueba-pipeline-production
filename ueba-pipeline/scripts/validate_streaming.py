@@ -37,8 +37,7 @@ def _load_events(data_dir: str):
     from ueba_pipeline.ingestion import FileEventSource
     src = FileEventSource.from_directory(data_dir)
     # keep_raw=True so the produced JSON carries the original envelope.
-    for ne in src.read(keep_raw=True):
-        yield ne
+    yield from src.read(keep_raw=True)
 
 
 def _raw_of(ne) -> dict:

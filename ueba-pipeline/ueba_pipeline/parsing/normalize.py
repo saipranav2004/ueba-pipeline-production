@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any
 
 # ── Constants ──────────────────────────────────────────────────────────────
 SYSTEM_SIDS = {"S-1-5-18", "S-1-5-19", "S-1-5-20"}
@@ -29,7 +29,7 @@ NULL_VALUES = {"-", "", None, "0x0000000000000000",
 
 # (channel, event_id) -> logical feature group, used by features/manifest.py to
 # decide which feature groups are available for a deployment.
-EVENT_GROUP: Dict[tuple[str, str], str] = {}
+EVENT_GROUP: dict[tuple[str, str], str] = {}
 
 
 def _register_group(channel: str, event_ids: list[str], group: str) -> None:
@@ -78,22 +78,22 @@ class NormalizedEvent:
     which matters at that event count.
     """
 
-    event_time: Optional[datetime]
-    ingest_time: Optional[str]
+    event_time: datetime | None
+    ingest_time: str | None
     channel: str
     event_id: str
     event_type: str          # exact key, e.g. "4624" or "sysmon_10"; "unknown" if unmapped
-    group: Optional[str]      # feature group this event contributes to, or None
-    computer_name: Optional[str]
-    outcome: Optional[str]
+    group: str | None      # feature group this event contributes to, or None
+    computer_name: str | None
+    outcome: str | None
     keywords: list
-    fields: Dict[str, Any] = field(default_factory=dict)
-    raw_event_data: Dict[str, Any] = field(default_factory=dict)
+    fields: dict[str, Any] = field(default_factory=dict)
+    raw_event_data: dict[str, Any] = field(default_factory=dict)
     parse_warnings: list = field(default_factory=list)
 
 
 # ── Typed casters ───────────────────────────────────────────────────────────
-def normalize_ip(ip: Optional[str]) -> Optional[str]:
+def normalize_ip(ip: str | None) -> str | None:
     if not ip or ip in NULL_VALUES:
         return None
     ip = ip.strip()
@@ -104,7 +104,7 @@ def normalize_ip(ip: Optional[str]) -> Optional[str]:
     return ip
 
 
-def normalize_username(username: Optional[str]) -> Optional[str]:
+def normalize_username(username: str | None) -> str | None:
     """
     Two Windows identity formats appear across the ingested log sources, and both
     must normalise to the same key or a user's identity fragments into two
@@ -143,7 +143,7 @@ def entity_key(value: Any) -> str:
     return str(value).strip().lower().split("@")[0]
 
 
-def hex_to_int(value: Optional[str]) -> Optional[int]:
+def hex_to_int(value: str | None) -> int | None:
     if value is None or value in NULL_VALUES:
         return None
     try:
@@ -161,7 +161,7 @@ _ISO_TS_RE = re.compile(
 )
 
 
-def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+def _parse_iso(ts: str | None) -> datetime | None:
     """Parse an ISO-8601 timestamp, tolerant of the shapes real log shippers emit.
 
     Python 3.11+ ``datetime.fromisoformat`` already handles a trailing ``Z``, a
@@ -209,7 +209,7 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
 # asrep_roast_flag). This trades a little indirection for not having ~60
 # near-identical parsing functions.
 
-_FIELD_MAPS: Dict[str, Dict[str, str]] = {
+_FIELD_MAPS: dict[str, dict[str, str]] = {
     "4624": {
         "target_user_name": "TargetUserName", "target_user_sid": "TargetUserSid",
         "target_domain": "TargetDomainName", "target_logon_id": "TargetLogonId",
@@ -433,7 +433,7 @@ def _event_type_key(channel: str, event_id: str) -> str:
     return event_id  # Security channel event IDs are used as-is
 
 
-def _extract_envelope(raw: dict) -> Optional[dict]:
+def _extract_envelope(raw: dict) -> dict | None:
     """Handles both the Winlogbeat-nested and flat-NXLog envelope shapes.
     Returns None (caller quarantines) if neither shape is recognizable."""
     if "winlog" in raw:
@@ -472,7 +472,7 @@ def _extract_envelope(raw: dict) -> Optional[dict]:
     return None
 
 
-def normalize_event(raw: dict, keep_raw: bool = True) -> Optional[NormalizedEvent]:
+def normalize_event(raw: dict, keep_raw: bool = True) -> NormalizedEvent | None:
     """Top-level entry point. Returns None only if the record has no
     recognizable envelope at all (caller should count/log this as a
     quarantined record, never silently discard).
@@ -508,7 +508,7 @@ def normalize_event(raw: dict, keep_raw: bool = True) -> Optional[NormalizedEven
     # is silently dropped and the bootstrap scan still sees the true event mix.
     group = EVENT_GROUP.get((channel, event_id)) if field_map else None
 
-    fields: Dict[str, Any] = {}
+    fields: dict[str, Any] = {}
     if field_map:
         for canonical, raw_key in field_map.items():
             fields[canonical] = event_data.get(raw_key)
@@ -534,7 +534,7 @@ def normalize_event(raw: dict, keep_raw: bool = True) -> Optional[NormalizedEven
     )
 
 
-def _apply_type_casts(fields: Dict[str, Any]) -> None:
+def _apply_type_casts(fields: dict[str, Any]) -> None:
     for key in ("src_ip", "dst_ip", "target_server"):
         if key in fields:
             fields[key] = normalize_ip(fields[key])
@@ -556,7 +556,7 @@ def _apply_type_casts(fields: Dict[str, Any]) -> None:
         fields["tcp"] = str(fields.get("tcp")) == "1"
 
 
-def _apply_derived_flags(type_key: str, fields: Dict[str, Any]) -> None:
+def _apply_derived_flags(type_key: str, fields: dict[str, Any]) -> None:
     """Behavioral flags derived once at parse time,
     computed once at parse time so every downstream feature/model doesn't
     recompute the same string comparisons."""

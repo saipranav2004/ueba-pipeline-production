@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
 
 from ueba_pipeline.config.schema import CapabilityConfig
-from ueba_pipeline.engine import EngineConfig, BehavioralEngine
+from ueba_pipeline.engine import BehavioralEngine, EngineConfig
 from ueba_pipeline.parsing.normalize import NormalizedEvent
 
 SIGNING_KEY = "0" * 64
-BASE = datetime(2025, 4, 1, 8, 0, tzinfo=timezone.utc)
+BASE = datetime(2025, 4, 1, 8, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
@@ -98,9 +98,10 @@ def test_deviation_queues_survive_the_round_trip_exactly(tmp_path):
     after = reloaded.score_queues(test_events)
 
     assert sorted(before) == sorted(after) != []
+    def shape(alerts):
+        return [(a.entity, a.p_value, a.surprise, a.signal, a.alerted) for a in alerts]
+
     for queue in before:
-        shape = lambda alerts: [(a.entity, a.p_value, a.surprise, a.signal, a.alerted)
-                                for a in alerts]
         assert shape(before[queue]) == shape(after[queue])
     assert reloaded.nhi_track.covered == engine.nhi_track.covered
 
@@ -110,7 +111,9 @@ def test_track_null_arrays_are_deterministically_named(tmp_path):
     serialise to different bytes each run and the signature would not be diffable."""
     _train_engine().save(str(tmp_path / "a"))
     _train_engine().save(str(tmp_path / "b"))
-    names = lambda p: sorted(f.name for f in (tmp_path / p).glob("*.npy"))
+    def names(p):
+        return sorted(f.name for f in (tmp_path / p).glob("*.npy"))
+
     assert names("a") == names("b")
     assert any(n.startswith("track_") for n in names("a"))
 
@@ -185,7 +188,7 @@ def test_load_rejects_object_bearing_npy(tmp_path):
     # with allow_pickle=False (what load_engine does) must raise.
     np.save(npy, np.array([{"payload": "not a number"}], dtype=object), allow_pickle=True)
     # Re-sign so the failure is the array loader, not the integrity check.
-    from ueba_pipeline.models.serialization import _bundle_signature, _SIG_NAME
+    from ueba_pipeline.models.serialization import _SIG_NAME, _bundle_signature
     files = {p.name: p.read_bytes() for p in bundle.glob("*") if p.name != _SIG_NAME}
     (bundle / _SIG_NAME).write_bytes(_bundle_signature(files))
 
@@ -204,7 +207,7 @@ def test_version_mismatch_is_rejected(tmp_path):
     blob = json.dumps(state, sort_keys=True).encode("utf-8")
     state_path.write_bytes(blob)
     # Re-sign so the version check is what fires, not the integrity check.
-    from ueba_pipeline.models.serialization import _bundle_signature, _SIG_NAME
+    from ueba_pipeline.models.serialization import _SIG_NAME, _bundle_signature
     files = {p.name: p.read_bytes() for p in bundle.glob("*") if p.name != _SIG_NAME}
     (bundle / _SIG_NAME).write_bytes(_bundle_signature(files))
 

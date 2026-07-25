@@ -17,8 +17,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "enterprise_simulator"))
 
 from attacks import (
-    ATTACK_REGISTRY, HEADLINE_ATTACKS, INSIDER_CORPUS_ATTACKS,
-    NHI_CORPUS_ATTACKS, NON_HEADLINE_ATTACKS,
+    ATTACK_REGISTRY,
+    HEADLINE_ATTACKS,
+    INSIDER_CORPUS_ATTACKS,
+    NHI_CORPUS_ATTACKS,
+    NON_HEADLINE_ATTACKS,
 )
 
 

@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -96,7 +95,7 @@ def fisher_g_pvalue(g: float, m: int) -> float:
     g = float(min(max(g, 0.0), 1.0 - 1e-15))
     if g <= 0.0:
         return 1.0
-    b = int(math.floor(1.0 / g))
+    b = math.floor(1.0 / g)
     # Cap the number of terms: beyond this, g0 is so small the tail probability is
     # ~1 and the cost is not worth paying (identity typing only reads the small-p
     # tail). For k <= b, k*g <= 1, so every (1 - k*g) base is non-negative.

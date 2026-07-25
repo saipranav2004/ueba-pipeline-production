@@ -8,7 +8,6 @@ not silently score against a changed schema.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
@@ -29,7 +28,7 @@ def _kl_divergence(p: np.ndarray, q: np.ndarray) -> float:
     return float(np.sum(p * np.log(p / q)))
 
 
-def _to_probability_mass(samples: List[float], bins: np.ndarray) -> np.ndarray:
+def _to_probability_mass(samples: list[float], bins: np.ndarray) -> np.ndarray:
     """Histogram `samples` into `bins` as counts (not density), then
     normalize to a probability mass vector that sums to 1, with additive
     smoothing so empty bins don't produce log(0)/div-by-zero in KL."""
@@ -38,7 +37,7 @@ def _to_probability_mass(samples: List[float], bins: np.ndarray) -> np.ndarray:
     return mass / mass.sum()
 
 
-def detect_concept_drift(old_scores: List[float], new_scores: List[float],
+def detect_concept_drift(old_scores: list[float], new_scores: list[float],
                           kl_threshold: float = 0.2, n_bins: int = 50) -> bool:
     """KL divergence between old and new score-distribution histograms, computed
     on true probability mass (see `_to_probability_mass`).
@@ -91,11 +90,11 @@ class VolumeAnomalyReport:
     current_volume: int
     baseline_mean: float
     baseline_std: float
-    z_score: Optional[float]
+    z_score: float | None
 
 
 def detect_volume_dropout(
-    current_window_event_count: int, baseline_hourly_counts: List[int],
+    current_window_event_count: int, baseline_hourly_counts: list[int],
     z_threshold: float = 3.0,
 ) -> VolumeAnomalyReport:
     """A sudden drop in total ingested event volume for a channel most

@@ -75,17 +75,19 @@ signed with HMAC-SHA256 and integrity-verified before any field is read.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
 from ueba_pipeline.features import build_capability_manifest, observed_entity_windows
 from ueba_pipeline.graph.auth_graph_anomaly import (
-    AuthGraphAnomalyDetector, AuthGraphConfig, DIR_OP_CLASS,
-    EXECUTION_VIEWS, RELATIONAL_VIEWS,
+    DIR_OP_CLASS,
+    EXECUTION_VIEWS,
+    RELATIONAL_VIEWS,
+    AuthGraphAnomalyDetector,
+    AuthGraphConfig,
 )
 from ueba_pipeline.graph.sessions import SessionResolver
 from ueba_pipeline.models.fisher import benjamini_hochberg, sidak
@@ -151,7 +153,7 @@ class WindowDetection:
 class EntityRisk:
     entity: str
     p_value: float              # Sidak-corrected significance (lower = worse)
-    top_hour: Optional[datetime]
+    top_hour: datetime | None
     graph_hits: int
     n_windows: int = 0
     alerted: bool = False
@@ -234,13 +236,13 @@ class BehavioralEngine:
     execution_graph: AuthGraphAnomalyDetector = field(
         default_factory=lambda: AuthGraphAnomalyDetector(
             config=AuthGraphConfig(enabled_views=EXECUTION_VIEWS)))
-    _execution_nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
+    _execution_nulls: dict[str, EmpiricalPValue] = field(default_factory=dict)
     manifest: object = None
     # One frozen benign null PER graph view, so each relationship type is scored
     # against its own baseline and cannot pollute the others.
-    _graph_nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
+    _graph_nulls: dict[str, EmpiricalPValue] = field(default_factory=dict)
     # Per-view benign novelty rate measured at fit; see _fit_graph.
-    view_stats: Dict[str, dict] = field(default_factory=dict)
+    view_stats: dict[str, dict] = field(default_factory=dict)
     # Behavioural-deviation queues. They ride in the same bundle so one `train`
     # produces one signed artifact, but they are scored on their own path
     # (score_queues) and never enter the relational Tippett combination or
@@ -249,7 +251,8 @@ class BehavioralEngine:
     insider_track: object = None
 
     # -- training ----------------------------------------------------------
-    def fit(self, events: List, config_capability=None, contaminated: Optional[set] = None) -> "BehavioralEngine":
+    def fit(self, events: list, config_capability=None,
+            contaminated: set | None = None) -> BehavioralEngine:
         """Fit the baseline and calibrate the per-view nulls on training events.
 
         ``contaminated`` is an optional set of ground-truth attack-window event
@@ -273,7 +276,7 @@ class BehavioralEngine:
         self._fit_tracks(events)
         return self
 
-    def _fit_tracks(self, events: List) -> None:
+    def _fit_tracks(self, events: list) -> None:
         """Fit the behavioural-deviation queues on the same training events.
 
         These cover the two threat classes the relational path is blind to by
@@ -283,13 +286,14 @@ class BehavioralEngine:
         an identity's schedule and rate are properties of everything it does.
         """
         from ueba_pipeline.identity.deviation import (
-            insider_volume_queue, nhi_schedule_queue,
+            insider_volume_queue,
+            nhi_schedule_queue,
         )
 
         self.nhi_track = nhi_schedule_queue().fit(events)
         self.insider_track = insider_volume_queue().fit(events)
 
-    def _fit_graph(self, graph_events: List, contaminated: Optional[set] = None,
+    def _fit_graph(self, graph_events: list, contaminated: set | None = None,
                    graph=None) -> tuple:
         """Build the graph baseline and freeze one benign null per view.
 
@@ -329,8 +333,8 @@ class BehavioralEngine:
         for e in baseline_evs:
             graph.observe_baseline(e)
 
-        by_view: Dict[str, list] = {}
-        novelty: Dict[str, list] = {}          # view -> [edges_scored, edges_novel]
+        by_view: dict[str, list] = {}
+        novelty: dict[str, list] = {}          # view -> [edges_scored, edges_novel]
         for e in calib_evs:
             for view, edge in graph.edges_for(e):
                 st = novelty.setdefault(view, [0, 0])
@@ -366,7 +370,7 @@ class BehavioralEngine:
         return nulls, stats
 
     # -- batch scoring (PURE: does not mutate detector state) --------------
-    def score(self, events: List) -> Tuple[List[WindowDetection], List[EntityRisk]]:
+    def score(self, events: list) -> tuple[list[WindowDetection], list[EntityRisk]]:
         # Only the (entity, hour) keys are needed, to count the tests each entity
         # received for the Šidák correction. Computing behavioural feature vectors
         # here would run every extractor and discard every value.
@@ -375,7 +379,7 @@ class BehavioralEngine:
         # above). Deliberately not carried from fit -- a stale session map would
         # silently misattribute months later.
         sessions = SessionResolver().fit(events, _norm)
-        cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+        cell: dict[tuple[str, datetime], WindowDetection] = {}
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
@@ -383,7 +387,7 @@ class BehavioralEngine:
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
         return detections, self._rollup(detections, observed, observed_days=max(days, 1.0))
 
-    def score_execution(self, events: List) -> List[EntityRisk]:
+    def score_execution(self, events: list) -> list[EntityRisk]:
         """Rank identities by novel program execution. SEPARATE queue and budget.
 
         Same machinery as :meth:`score` -- Dirichlet edge surprise, per-view frozen
@@ -396,7 +400,7 @@ class BehavioralEngine:
             return []
         observed = observed_entity_windows(events, self.config.window_hours)
         sessions = SessionResolver().fit(events, _norm)
-        cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+        cell: dict[tuple[str, datetime], WindowDetection] = {}
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions,
                                     graph=self.execution_graph,
@@ -411,7 +415,7 @@ class BehavioralEngine:
         finally:
             self.config.alert_budget_per_day = budget
 
-    def score_queues(self, events: List) -> Dict[str, list]:
+    def score_queues(self, events: list) -> dict[str, list]:
         """Score the behavioural-deviation queues. SEPARATE from ``score``.
 
         Returns ``{"nhi": [...], "insider": [...]}``, each a ranked list with its
@@ -421,7 +425,7 @@ class BehavioralEngine:
         is the property that stops a broad signal displacing a narrow one. Pure --
         it does not mutate any track.
         """
-        out: Dict[str, list] = {}
+        out: dict[str, list] = {}
         if self.config.execution_budget_per_day > 0 and self._execution_nulls:
             out["execution"] = self.score_execution(events)
         for name, budget in (("nhi", self.config.nhi_budget_per_day),
@@ -432,7 +436,7 @@ class BehavioralEngine:
             out[name] = track.score(events, budget_per_day=budget)
         return out
 
-    def observe(self, events: List) -> "BehavioralEngine":
+    def observe(self, events: list) -> BehavioralEngine:
         """Explicitly fold events into the baseline (online adaptation).
 
         Separated from ``score`` so that batch scoring stays reproducible; a
@@ -461,20 +465,20 @@ class BehavioralEngine:
                 sessions.fit([e], _norm) if not sessions._logons else _stream_session(sessions, e)
             if not is_graph_event(e.event_type):
                 continue
-            cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+            cell: dict[tuple[str, datetime], WindowDetection] = {}
             self._score_graph_event(e, cell, absorb=True, sessions=sessions)
             for d in cell.values():
                 if d.graph_p < 1.0:
                     yield d
 
     # -- scoring -----------------------------------------------------------
-    def _cell(self, cell: Dict, entity: str, hour: datetime) -> WindowDetection:
+    def _cell(self, cell: dict, entity: str, hour: datetime) -> WindowDetection:
         key = (entity, hour)
         if key not in cell:
             cell[key] = WindowDetection(entity, hour)
         return cell[key]
 
-    def _entity_for(self, e, sessions: Optional[SessionResolver]) -> str:
+    def _entity_for(self, e, sessions: SessionResolver | None) -> str:
         """Resolve a graph event to the ACCOUNT it should be attributed to.
 
         Host-scoped telemetry (Sysmon ProcessAccess/ProcessCreate) names a host
@@ -501,8 +505,8 @@ class BehavioralEngine:
                 return owner
         return host or "endpoint"
 
-    def _score_graph_event(self, e, cell: Dict, absorb: bool,
-                           sessions: Optional[SessionResolver] = None,
+    def _score_graph_event(self, e, cell: dict, absorb: bool,
+                           sessions: SessionResolver | None = None,
                            graph=None, nulls=None) -> None:
         # ``graph``/``nulls`` default to the relational detector. The execution
         # queue passes its own pair so both queues run one implementation of
@@ -546,8 +550,8 @@ class BehavioralEngine:
         d.graph_p = min(d.graph_p, p)
 
     # -- rollup / alerting -------------------------------------------------
-    def _rollup(self, detections: List[WindowDetection], observed=None,
-                observed_days: Optional[float] = None) -> List[EntityRisk]:
+    def _rollup(self, detections: list[WindowDetection], observed=None,
+                observed_days: float | None = None) -> list[EntityRisk]:
         """Entity risk = Sidak-corrected minimum hourly p over the entity's hours.
 
         Each hour's significance is ``WindowDetection.p``. Taking a minimum over n
@@ -559,19 +563,19 @@ class BehavioralEngine:
         ``observed`` is the set of ``(entity, window_start)`` pairs the batch saw,
         which is how many tests each entity received.
         """
-        by_entity: Dict[str, List[WindowDetection]] = {}
+        by_entity: dict[str, list[WindowDetection]] = {}
         for d in detections:
             by_entity.setdefault(d.entity, []).append(d)
 
         # Number of hours each entity was actually observed = tests it received.
-        tested: Dict[str, int] = {}
+        tested: dict[str, int] = {}
         if observed:
-            seen: Dict[str, set] = {}
+            seen: dict[str, set] = {}
             for user, window_start in observed:
                 seen.setdefault(_norm(user), set()).add(_floor_hour(window_start))
             tested = {k: len(v) for k, v in seen.items()}
 
-        out: List[EntityRisk] = []
+        out: list[EntityRisk] = []
         for entity, ds in by_entity.items():
             ds.sort(key=lambda d: d.hour)
             best = min(ds, key=lambda d: d.p)
@@ -588,18 +592,18 @@ class BehavioralEngine:
         if out:
             if self.config.alert_mode == "fdr":
                 mask = benjamini_hochberg([r.p_value for r in out], fdr=self.config.alert_fdr)
-                for r, m in zip(out, mask):
+                for r, m in zip(out, mask, strict=True):
                     r.alerted = bool(m)
             elif self.config.alert_mode == "budget":
                 days = max(observed_days or 1.0, 1e-9)
-                k = int(round(self.config.alert_budget_per_day * days))
+                k = round(self.config.alert_budget_per_day * days)
                 for r in out[:max(k, 0)]:
                     r.alerted = True
             else:
                 raise ValueError(f"unknown alert_mode {self.config.alert_mode!r}")
         return out
 
-    def alerts(self, entity_risks: List[EntityRisk]) -> List[EntityRisk]:
+    def alerts(self, entity_risks: list[EntityRisk]) -> list[EntityRisk]:
         return [r for r in entity_risks if r.alerted]
 
     # -- persistence (non-executable, signed) -----------------------------
@@ -612,7 +616,7 @@ class BehavioralEngine:
         save_engine(self, directory)
 
     @staticmethod
-    def load(directory: str) -> "BehavioralEngine":
+    def load(directory: str) -> BehavioralEngine:
         from ueba_pipeline.models.serialization import load_engine
         engine = load_engine(directory)
         if not isinstance(engine, BehavioralEngine):
