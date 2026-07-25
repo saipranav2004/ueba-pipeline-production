@@ -68,6 +68,18 @@ def cmd_train(args: argparse.Namespace) -> None:
               f"identities admitted to the NHI queue", file=sys.stderr)
 
 
+def queue_line(a) -> str:
+    """Render one queue alert. The only place that reads a queue alert's fields.
+
+    Split out of ``cmd_score`` so a test can drive it with a real alert from every
+    queue: the queues do not share a concrete type, and a printer that reached for
+    a field only one of them had is exactly the defect this guards against.
+    """
+    top = a.top_hour.isoformat() if a.top_hour else "-"
+    return (f"  {a.p_value:10.3e}  {a.entity:28s}  "
+            f"{a.evidence:<16s} windows={a.n_windows:<4d} {top}")
+
+
 def cmd_score(args: argparse.Namespace) -> None:
     engine = BehavioralEngine.load(args.model_dir)
     if getattr(args, "alert_budget_per_day", None) is not None:
@@ -95,9 +107,7 @@ def cmd_score(args: argparse.Namespace) -> None:
             continue
         print(f"\n  == {name} queue ({len(fired)} alert(s), separate budget) ==")
         for a in fired:
-            top = a.top_hour.isoformat() if a.top_hour else "-"
-            print(f"  {a.p_value:10.3e}  {a.entity:28s}  "
-                  f"signal={a.signal:<7s} windows={a.n_windows:<4d} {top}")
+            print(queue_line(a))
 
 
 def cmd_score_stream(args: argparse.Namespace) -> None:
@@ -317,7 +327,9 @@ def cmd_graph_viz(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(prog="ueba", description="Behavioural ITDR engine: relational, execution, NHI and insider queues")
+    p = argparse.ArgumentParser(
+        prog="ueba",
+        description="Behavioural ITDR engine: relational, execution, NHI and insider queues")
     sub = p.add_subparsers(dest="command", required=True)
 
     p_train = sub.add_parser("train", help="Fit the two-track engine and write a signed bundle")

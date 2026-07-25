@@ -162,6 +162,19 @@ class EntityRisk:
     def risk(self) -> float:
         return 1.0 - self.p_value
 
+    @property
+    def evidence(self) -> str:
+        """One-line provenance, in the vocabulary this queue actually has.
+
+        Every alert returned by :meth:`BehavioralEngine.score_queues` carries this,
+        whatever its concrete type, so a consumer can render any queue without
+        knowing which one it is holding. The queues do NOT share a payload -- a
+        relational rollup counts surprising edges, a deviation track names the
+        signal that fired -- and flattening them to a common field would throw
+        away the part an analyst needs.
+        """
+        return f"hits={self.graph_hits}"
+
 
 @dataclass
 class EngineConfig:
@@ -418,12 +431,19 @@ class BehavioralEngine:
     def score_queues(self, events: list) -> dict[str, list]:
         """Score the behavioural-deviation queues. SEPARATE from ``score``.
 
-        Returns ``{"nhi": [...], "insider": [...]}``, each a ranked list with its
-        own budget applied. Deliberately a different method with a different
-        return type from :meth:`score`: these alerts are a different queue an
-        analyst triages separately, and keeping them out of the relational ranking
-        is the property that stops a broad signal displacing a narrow one. Pure --
-        it does not mutate any track.
+        Returns ``{"execution": [...], "nhi": [...], "insider": [...]}``, each a
+        ranked list with its own budget applied. Deliberately a different method
+        with a different return type from :meth:`score`: these alerts are a
+        different queue an analyst triages separately, and keeping them out of the
+        relational ranking is the property that stops a broad signal displacing a
+        narrow one. Pure -- it does not mutate any track.
+
+        The lists are NOT of one concrete type -- ``execution`` holds
+        ``EntityRisk`` from the relational rollup, the deviation queues hold
+        ``TrackAlert``. What every element does guarantee is the rendering
+        contract a consumer needs: ``entity``, ``p_value``, ``top_hour``,
+        ``n_windows``, ``alerted`` and ``evidence``. Anything reading this
+        dictionary must stay inside that set; ``test_queue_contract`` enforces it.
         """
         out: dict[str, list] = {}
         if self.config.execution_budget_per_day > 0 and self._execution_nulls:

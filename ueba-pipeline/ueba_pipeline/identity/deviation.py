@@ -171,6 +171,11 @@ class TrackAlert:
     n_windows: int
     alerted: bool = False
 
+    @property
+    def evidence(self) -> str:
+        """See ``EntityRisk.evidence`` -- the shared accessor across all queues."""
+        return f"signal={self.signal}"
+
 
 @dataclass
 class BehaviouralDeviationTrack:

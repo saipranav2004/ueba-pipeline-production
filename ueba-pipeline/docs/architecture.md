@@ -169,6 +169,24 @@ Computed with NetworkX on a rolling snapshot rather than per event, so it only
 has to finish inside the retrain window: at this scale (a few hundred to a few
 thousand nodes) the full five-metric pass completes in well under a second.
 
+## What a queue alert guarantees
+
+`score_queues` returns one list per queue, and those lists are **not** of one
+concrete type: the execution queue holds `EntityRisk` from the relational rollup,
+the deviation queues hold `TrackAlert`. That is deliberate -- a relational rollup
+counts surprising edges, a deviation track names the signal that fired, and
+flattening them to a common payload would discard the part an analyst reads.
+
+What every alert does guarantee is the rendering contract: `entity`, `p_value`,
+`top_hour`, `n_windows`, `alerted`, and `evidence` (a one-line provenance string
+in whatever vocabulary that queue has). Anything consuming the queues -- the CLI
+printer, and any alert sink added later -- must stay inside that set.
+
+This was learned the hard way: the CLI reached for `.signal`, which only the
+deviation queues have, and `ueba score` raised `AttributeError` as soon as the
+execution queue fired. `tests/unit/test_queue_contract.py` now drives the real
+printer with a real alert from every queue.
+
 ## The deviation queues are windowed, not streaming
 
 `score_stream` covers the relational path only. The deviation queues are scored by
