@@ -97,7 +97,11 @@ from ueba_pipeline.parsing.normalize import entity_key as _norm
 # Exact event types the detector projects onto edges. Listed explicitly (not by
 # prefix) so a new sysmon_1x type cannot be routed into the graph by accident.
 GRAPH_EVENT_TYPES = frozenset(
-    {"4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10"}
+    {"4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10",
+     # Candidate views under measurement (pipe / reg / share). Listing the type
+     # here only lets edges_for see the event; whether a view is SCORED is decided
+     # by the queue's enabled_views, so a view can be ablated without touching this.
+     "sysmon_12", "sysmon_13", "sysmon_17", "sysmon_18", "5140", "5145"}
     # Every privileged directory operation the dir_op view classifies: group
     # membership, account lifecycle, AD object access, attribute modification.
     # Coverage grows by adding a row to DIR_OP_CLASS, not a branch here.
@@ -107,7 +111,12 @@ GRAPH_EVENT_TYPES = frozenset(
 # Graph events whose acting principal is the SubjectUserName (who performed the
 # directory operation), not the TargetUserName (which names the group/object
 # acted upon). Used by _entity_for to attribute the detection to the actor.
-_SUBJECT_ACTOR_EVENT_TYPES = frozenset(DIR_OP_CLASS)
+# Share access names the actor the same way: SubjectUserName performed it, and
+# the share is the object.
+_SUBJECT_ACTOR_EVENT_TYPES = frozenset(DIR_OP_CLASS) | {"5140", "5145"}
+
+# Event types whose acting account is in a plain `User` field.
+_DIRECT_USER_EVENT_TYPES = frozenset({"sysmon_12", "sysmon_13", "sysmon_17", "sysmon_18"})
 
 
 def is_graph_event(event_type: str) -> bool:
@@ -521,6 +530,14 @@ class BehavioralEngine:
             actor = _norm(e.fields.get("subject_user_name"))
             if actor:
                 return actor
+        # Pipe and registry telemetry carries the acting account directly, so the
+        # detection cell is attributed to the same identity the edge is keyed on.
+        # Deliberately NOT extended to sysmon_1: that path resolves through the
+        # session map today and the headline figure is measured with it.
+        if e.event_type in _DIRECT_USER_EVENT_TYPES:
+            direct = _norm(e.fields.get("user_norm") or e.fields.get("user"))
+            if direct and not direct.endswith("$"):
+                return direct
         user = _norm(e.fields.get("target_user_name"))
         if user:
             return user

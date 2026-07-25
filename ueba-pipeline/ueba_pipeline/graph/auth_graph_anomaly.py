@@ -92,6 +92,41 @@ def _build_index(marg: dict[str, float]) -> tuple:
     return counts, prefix
 
 
+def _pipe_name(value) -> str:
+    """Bare pipe name, with the ``\\\\.\\pipe\\`` prefix and host form removed.
+
+    Sysmon writes the local form; a remote pipe arrives as ``\\\\HOST\\pipe\\name``.
+    Both name the same resource, and keying on the raw string would make every
+    remote use of a familiar pipe look novel.
+    """
+    if not value:
+        return ""
+    p = str(value).replace("/", "\\").strip().lower()
+    marker = "\\pipe\\"
+    i = p.find(marker)
+    if i >= 0:
+        p = p[i + len(marker):]
+    return p.strip("\\")
+
+
+# How much of a registry path identifies a *location* rather than an individual
+# value. Three components below the hive keeps
+# ``hklm\system\currentcontrolset\services`` distinct from
+# ``hklm\software\microsoft\windows`` while collapsing the per-application leaf
+# churn that would otherwise make every write novel.
+_REGISTRY_CLASS_DEPTH = 3
+
+
+def _registry_class(value) -> str:
+    """Hive plus the first few path components of a registry target."""
+    if not value:
+        return ""
+    parts = [p for p in str(value).replace("/", "\\").strip().lower().split("\\") if p]
+    if not parts:
+        return ""
+    return "\\".join(parts[: 1 + _REGISTRY_CLASS_DEPTH])
+
+
 def _basename(path) -> str:
     if not path:
         return ""
@@ -319,6 +354,40 @@ class AuthGraphAnomalyDetector:
             image = _basename(f.get("image"))
             if user and image and not user.endswith("$"):
                 out.append(("proc_exec", (user, image)))
+        elif et in ("sysmon_17", "sysmon_18"):
+            # (account -> named pipe). A named pipe is the primary IPC mechanism
+            # for PsExec-class execution and for Cobalt Strike's beacon, so the
+            # published detections are lists of known-bad pipe names. This engine
+            # cannot use a name list and does not need one: a tool's pipe is novel
+            # FOR THAT ACCOUNT by construction, and novelty is what is already
+            # measured. The random-suffix pipes that defeat a static list are the
+            # easiest case here, not the hardest.
+            user = _norm(f.get("user_norm") or f.get("user"))
+            pipe = _pipe_name(f.get("pipe_name"))
+            if user and pipe and not user.endswith("$"):
+                out.append(("pipe", (user, pipe)))
+        elif et in ("sysmon_12", "sysmon_13"):
+            # (account -> registry location class). Keyed on a truncated path, for
+            # exactly the reason DIR_OP_CLASS is keyed on the operation: the raw
+            # TargetObject is near-unique per event (every application writes its
+            # own values all day), so novelty over it would be permanent noise.
+            # The truncation is generic -- hive plus three components -- and
+            # deliberately carries no list of "persistence locations", which would
+            # be a signature wearing a hash table.
+            user = _norm(f.get("user_norm") or f.get("user"))
+            key = _registry_class(f.get("target_object"))
+            if user and key and not user.endswith("$"):
+                out.append(("reg", (user, key)))
+        elif et in ("5140", "5145"):
+            # (account -> file share). The only telemetry that says which identity
+            # reached which share, which is the relationship both insider data
+            # staging and share-based lateral movement create and that no other
+            # view sees: a logon to a file server is a `user_src` edge whether the
+            # account then read its own team's folder or the finance archive.
+            actor = _norm(f.get("subject_user_name"))
+            share = _norm(f.get("share_name"))
+            if actor and share and not actor.endswith("$"):
+                out.append(("share", (actor, share)))
         elif et in DIR_OP_CLASS:
             # Privileged directory operation: (actor -> operation class).
             #

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from config.company import DOMAIN_FQDN
 from core.daily_simulation import _CIFS_SPNS
 from core.employees import Employee
 from core.employees import user_sid as _user_sid
@@ -42,6 +43,7 @@ from generators.security_generator import (
     gen_4776,
     gen_group_change,
 )
+from generators.security_generator_extended import gen_5140, gen_5145
 from generators.sysmon_generator import gen_eid1, gen_eid10
 
 InjectedEvents = list[tuple[str, datetime, dict[str, Any]]]
@@ -748,6 +750,106 @@ def inject_insider_data_staging(
     return events, label
 
 
+def inject_insider_share_exfiltration(
+    roster: list[Employee],
+    bus: EventBus,
+    sim_date: date,
+    rng: random.Random,
+) -> tuple[InjectedEvents, AttackLabel]:
+    """An authorised user reading a department share that is not theirs.
+
+    The second insider sub-class, and deliberately NOT a variant of
+    ``insider_data_staging``: that one is a pure RATE anomaly over the account's
+    own path and is kept novelty-free on purpose, because it is what proves the
+    volume instrument works. Collapsing the two would destroy that measurement.
+
+    This is SCOPE abuse instead. Every employee's routine share access is
+    department-keyed -- one share, every day, for their whole tenure -- so an
+    account reading another department's share is a relationship it has never
+    had. That is the shape real insider data theft takes when the actor already
+    holds broad file permissions: the access is authorised, the authentication is
+    ordinary, and only the *reach* is wrong.
+
+    Telemetry is what a real file server writes for it: one 5140 share connect,
+    then a 5145 per file touched (Audit Detailed File Share), from the actor's own
+    workstation over their own logon. No new host, no new credential, no failure,
+    no privileged operation -- so the credential-theft views see nothing, and only
+    an (account -> share) relationship model can distinguish it from a normal day.
+    """
+    from core.daily_simulation import _DEPT_FILES, _DEPT_SHARES
+
+    # Someone whose own department has a share to deviate FROM: without a
+    # baseline there is no deviation to measure, only a cold-start.
+    candidates = [e for e in roster if e.department in _DEPT_SHARES]
+    actor = rng.choice(candidates)
+    foreign = [d for d in _DEPT_SHARES if d != actor.department]
+    target_dept = rng.choice(foreign)
+    share_name, _share_path, share_server = _DEPT_SHARES[target_dept]
+    srv_fqdn = f"{share_server}.{DOMAIN_FQDN}"
+
+    # Working hours: an insider acts while their presence is unremarkable.
+    start_ts = local_to_utc(_float_hour_to_datetime(sim_date, rng.uniform(10.0, 16.0)))
+    src_ip = actor.workstation_ip
+
+    events: InjectedEvents = []
+    session = bus.open_session(
+        samaccountname=actor.samaccountname,
+        domain="NEXOVATE",
+        logon_type=3,
+        auth_package="Kerberos",
+        src_ip=src_ip,
+        src_port=bus.new_src_port(),
+        workstation=actor.workstation,
+        computer=actor.workstation + ".nexovate.local",
+        logon_time_utc=start_ts,
+        is_elevated=False,
+        is_remote=False,
+    )
+
+    # A ticket for the file server carrying the share, as Kerberos requires.
+    if share_server in _CIFS_SPNS:
+        fspn, fspn_sid = _CIFS_SPNS[share_server]
+        events.append(("security", start_ts,
+                       gen_4769(actor.samaccountname, fspn, fspn_sid, src_ip, start_ts, bus)))
+
+    events.append(("security", start_ts,
+                   gen_5140(session, share_name, _share_path, src_ip, start_ts, bus,
+                            share_server=srv_fqdn)))
+
+    # Then a sustained read of that department's documents. Volume is well above a
+    # normal browse but not absurd -- the signal this exists to test is the share
+    # itself, not the count.
+    pool = _DEPT_FILES.get(target_dept) or ["report.docx"]
+    ts = start_ts
+    n_files = rng.randint(40, 90)
+    for i in range(n_files):
+        ts = ts + timedelta(seconds=rng.uniform(2.0, 15.0))
+        fname = f"{rng.choice(pool)}" if i % 3 else f"archive/{rng.choice(pool)}"
+        events.append(("security", ts,
+                       gen_5145(session, share_name, fname, src_ip, ts, bus,
+                                share_server=srv_fqdn, access_mask="0x1")))
+
+    label = AttackLabel(
+        attack_type="insider_share_exfiltration",
+        mitre_technique="T1039",       # Data from Network Shared Drive
+        start_time=utc_now_str(start_ts),
+        end_time=utc_now_str(ts),
+        target_users=[actor.samaccountname],
+        source_ip=src_ip,
+        details={
+            "actor": actor.samaccountname,
+            "actor_department": actor.department,
+            "target_share": share_name,
+            "files_read": n_files,
+            "signature": f"{actor.samaccountname} ({actor.department}) read {n_files} "
+                         f"files from {share_name}, a {target_dept} share their "
+                         f"account has never touched; own workstation, own logon, "
+                         f"every access authorised",
+        },
+    )
+    return events, label
+
+
 def inject_nhi_schedule_hijack(
     roster: list[Employee],
     bus: EventBus,
@@ -850,6 +952,7 @@ ATTACK_REGISTRY = {
     "ntds_dump": inject_ntds_dump,
     "account_manipulation": inject_account_manipulation,
     "insider_data_staging": inject_insider_data_staging,
+    "insider_share_exfiltration": inject_insider_share_exfiltration,
     "nhi_schedule_hijack": inject_nhi_schedule_hijack,
 }
 
@@ -873,7 +976,7 @@ ATTACK_REGISTRY = {
 # `--inject-attacks headline`, NOT by `--inject-attacks all`. Keeping the headline
 # set named and explicit is what keeps the figure reproducible as the registry
 # grows.
-INSIDER_CORPUS_ATTACKS = ("insider_data_staging",)
+INSIDER_CORPUS_ATTACKS = ("insider_data_staging", "insider_share_exfiltration")
 NHI_CORPUS_ATTACKS = ("nhi_schedule_hijack",)
 NON_HEADLINE_ATTACKS = INSIDER_CORPUS_ATTACKS + NHI_CORPUS_ATTACKS
 HEADLINE_ATTACKS = tuple(k for k in ATTACK_REGISTRY if k not in NON_HEADLINE_ATTACKS)

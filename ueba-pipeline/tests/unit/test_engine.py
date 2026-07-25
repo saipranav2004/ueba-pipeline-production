@@ -28,13 +28,16 @@ H = datetime(2025, 1, 1, 9, 0, 0, tzinfo=UTC)
 def test_is_graph_event_matches_exactly_not_by_prefix():
     """Event-type routing must match exactly, never by prefix.
 
-    A prefix test on "sysmon_1" also matches sysmon_10/11/12, quietly routing
-    FileCreate and registry events into a detector that models process access.
-    sysmon_10 IS wanted, so it is listed explicitly rather than matched by
-    accident."""
-    for t in ("4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10"):
+    A prefix test on "sysmon_1" also matches sysmon_10/11/12/13, quietly routing
+    FileCreate into a detector that models process access. Every routed type is
+    listed explicitly, so membership is a decision rather than an accident --
+    sysmon_12/13 are now routed deliberately (the `reg` view) while sysmon_11,
+    one digit away, still is not."""
+    for t in ("4624", "4625", "4768", "4769", "sysmon_1", "sysmon_10",
+              "sysmon_12", "sysmon_13", "sysmon_17", "sysmon_18", "5140", "5145"):
         assert is_graph_event(t)
-    for t in ("sysmon_11", "sysmon_12", "sysmon_3", "4672", "4104", "46240"):
+    for t in ("sysmon_11", "sysmon_3", "sysmon_7", "sysmon_23", "4672", "4104",
+              "46240", "sysmon_180", "51450"):
         assert not is_graph_event(t), f"{t} must not be routed to the graph track"
 
 def test_window_detection_cell_p_is_tippett_corrected():

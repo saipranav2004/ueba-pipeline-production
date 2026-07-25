@@ -381,6 +381,47 @@ _FIELD_MAPS: dict[str, dict[str, str]] = {
         "process_guid": "ProcessGuid", "query_name": "QueryName",
         "query_status": "QueryStatus", "image": "Image", "user": "User",
     },
+    # Named pipes. Sysmon 17 is the server creating a pipe, 18 a client
+    # connecting to one. Both are documented lateral-movement and C2 surfaces --
+    # a named pipe is Cobalt Strike's primary IPC mechanism, and PsExec-class
+    # tools create one per execution. Production guidance is to alert on a list
+    # of known-bad pipe names; this engine cannot do that (it would be a
+    # signature), and does not need to: a tool's pipe is novel FOR THAT ACCOUNT
+    # by construction, which is what the behavioural model already measures.
+    "sysmon_17": {
+        "process_guid": "ProcessGuid", "pipe_name": "PipeName",
+        "image": "Image", "user": "User",
+    },
+    "sysmon_18": {
+        "process_guid": "ProcessGuid", "pipe_name": "PipeName",
+        "image": "Image", "user": "User",
+    },
+    # Registry. 12 is key create/delete, 13 a value set. Persistence lives here
+    # (Run keys, service definitions) as does security-control tampering
+    # (EnableLUA, LSA settings).
+    "sysmon_12": {
+        "process_guid": "ProcessGuid", "event_subtype": "EventType",
+        "target_object": "TargetObject", "image": "Image", "user": "User",
+    },
+    "sysmon_13": {
+        "process_guid": "ProcessGuid", "event_subtype": "EventType",
+        "target_object": "TargetObject", "details": "Details",
+        "image": "Image", "user": "User",
+    },
+    # File-share access. 5140 is the share connection, 5145 a per-object access
+    # check within it. Together they are the only telemetry that says WHICH
+    # identity reached WHICH share -- the relationship insider data staging and
+    # share-based lateral movement both create.
+    "5140": {
+        "subject_user_name": "SubjectUserName", "subject_logon_id": "SubjectLogonId",
+        "share_name": "ShareName", "share_local_path": "ShareLocalPath",
+        "src_ip": "IpAddress", "access_mask": "AccessMask",
+    },
+    "5145": {
+        "subject_user_name": "SubjectUserName", "subject_logon_id": "SubjectLogonId",
+        "share_name": "ShareName", "relative_target": "RelativeTargetName",
+        "src_ip": "IpAddress", "access_mask": "AccessMask",
+    },
     # DNS analytical
     "dns_256": {
         "src_ip": "Source", "qname": "QNAME", "qtype": "QTYPE",
