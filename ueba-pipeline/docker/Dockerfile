@@ -10,8 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc g++ \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# pyproject.toml is the single source of truth for dependencies, so the image
+# installs the package rather than a parallel requirements file that could drift
+# from it. The source is copied first because a PEP 517 build needs it; the cost
+# is that a source edit re-resolves dependencies, which is the price of not
+# maintaining two dependency lists that can disagree.
+#
+# No extras: `kafka` and `benchmark` are deliberately excluded so the runtime
+# image carries neither librdkafka nor a gradient booster.
+COPY pyproject.toml README.md ./
+COPY ueba_pipeline/ ./ueba_pipeline/
+RUN pip install --no-cache-dir --prefix=/install .
 
 
 FROM python:3.12-slim AS runtime
@@ -24,7 +33,8 @@ RUN groupadd --gid 1000 ueba && \
 COPY --from=builder /install /usr/local
 
 WORKDIR /app
-COPY ueba_pipeline/ ./ueba_pipeline/
+# ueba_pipeline is installed into site-packages by the builder stage; only the
+# simulator needs copying, because it is deliberately not part of the package.
 COPY enterprise_simulator/ ./enterprise_simulator/
 
 # Model artifacts and ingested data are runtime state, not image content —
@@ -36,5 +46,6 @@ USER ueba
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 
-ENTRYPOINT ["python3", "-m", "ueba_pipeline.cli.main"]
+# The console script declared in pyproject.toml.
+ENTRYPOINT ["ueba"]
 CMD ["--help"]

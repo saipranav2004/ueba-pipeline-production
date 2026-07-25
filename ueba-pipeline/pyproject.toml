@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ueba-pipeline"
+description = "Behavioural and graph anomaly detection for Active Directory identity threat detection"
+readme = "README.md"
+# The simulator uses PEP 701 f-strings, so 3.12 is a hard floor, not a
+# preference. It is also the interpreter the container image is built on.
+requires-python = ">=3.12"
+dynamic = ["version"]
+
+# Runtime dependencies of the DETECTION path only. Everything a production
+# deployment does -- ingest, fit, score, sign, load -- runs on exactly this set;
+# see the extras below for the parts that do not ship.
+#
+# Version floors are set to the API each module actually uses; upper bounds stop
+# a major release from silently changing numerical behaviour in a detector.
+dependencies = [
+    "numpy>=2.0,<3",      # counters, quantile grids, scoring
+    "scipy>=1.11,<2",     # scipy.stats + scipy.special: p-value combiners, NB tail
+    "pydantic>=2.5,<3",   # config schema validation
+    "PyYAML>=6.0,<7",     # config files
+    "networkx>=3.0,<4",   # identity graph (analyst tooling); NOT on the detection path
+]
+
+[project.optional-dependencies]
+# Ingesting from a broker. Guarded at the import site in ingestion/source.py --
+# the engine falls back to file ingestion when it is absent, and the unit tests
+# inject a fake module rather than requiring the real one.
+kafka = ["confluent-kafka>=2.5,<3"]
+
+# The classical-model comparison harness (`model-benchmark`). Imported lazily so
+# that a deployment which never runs the comparison never carries a gradient
+# booster: keeping these out of the base set is what lets the production image
+# stay small, and is the reason `model_benchmark` imports them inside functions.
+benchmark = [
+    "scikit-learn>=1.3,<2",
+    "xgboost>=2.0,<4",
+]
+
+# Everything needed to run the test suite and the linter. Deliberately does NOT
+# pull in `benchmark`: the suite tests the split protocols on synthetic matrices
+# and never fits an estimator, so a contributor can verify the repository with
+# the runtime dependency set alone.
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.0",
+]
+
+[project.scripts]
+ueba = "ueba_pipeline.cli.main:main"
+
+[tool.setuptools.dynamic]
+# One source of truth for the version: the package's own __version__.
+version = { attr = "ueba_pipeline.__version__" }
+
+[tool.setuptools.packages.find]
+# `enterprise_simulator` is a development and evaluation tool, not part of the
+# product, so it is deliberately not packaged. The container image copies it in
+# separately for reproducing the published figures.
+include = ["ueba_pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra surfaces the reason for every skip. Two tests in the suite are opt-in
+# network tests, and a silent skip is indistinguishable from a passing test.
+addopts = "-ra --strict-markers"
+filterwarnings = ["error::DeprecationWarning:ueba_pipeline.*"]
+
+[tool.ruff]
+# The 99th percentile of this codebase is 94 characters and the code is written
+# in ~80-100 columns throughout; 100 is the smallest limit that does not force
+# reflowing prose that is already readable.
+line-length = 100
+target-version = "py312"
+extend-exclude = ["enterprise_simulator/output"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes: undefined names, unused imports, redefinitions -- real defects
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # import sorting -- deterministic, removes a whole class of diff noise
+    "B",    # bugbear: mutable defaults, loop-variable capture, silent zip truncation
+    "C4",   # comprehension misuse
+    "UP",   # pyupgrade: the floor is 3.12, so PEP 585/604 syntax is simply correct here
+    "RUF",  # ruff-specific correctness checks
+]
+ignore = [
+    # This codebase's docstrings are the design record: they carry mathematics
+    # (-log P, alpha, tau), arrows, and tables built from box-drawing characters.
+    # RUF002/RUF003 flag those as "ambiguous unicode", which is a real warning for
+    # identifiers and a false positive for prose. Code is still checked by RUF001.
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules build fake telemetry inline and re-import under manipulated
+# sys.modules; import placement there is meaningful, not accidental.
+"tests/**" = ["E402"]
+# Analysis scripts prepend the repository root to sys.path before importing the
+# package, which necessarily happens after the import block starts.
+"scripts/**" = ["E402"]
+# The simulator is a corpus of verbatim Windows artefacts: process command lines,
+# registry paths, SDDL strings, and column-aligned host/account inventories. Its
+# line widths come from the data, and wrapping them either falsifies the artefact
+# (a command line is one string) or destroys the alignment that makes an
+# inventory table readable. E501 is therefore not enforced there -- everything
+# else is.
+"enterprise_simulator/**" = ["E402", "E501"]
+# Embeds a self-contained D3 visualisation as an HTML/JS template string. The
+# long lines are JavaScript, not Python, and Python's limit does not describe them.
+"ueba_pipeline/graph/visualize.py" = ["E501"]

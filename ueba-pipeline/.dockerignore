@@ -4,6 +4,5 @@
 enterprise_simulator/output/
 artifacts/
 .git/
-*.md
 docs/
 tests/

@@ -38,9 +38,9 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 |---|---|---|
 | **engine** | **54/60 = 90.0%** | **3.19** |
 
-Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
-Pass-the-Hash `8/9`, AS-REP roasting `6/6`, password spray `6/6`, golden ticket
-`4/4`, LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
+Per-technique: Pass-the-Hash `9/9`, DCSync `8/8`, Kerberoasting `7/8`, silver
+ticket `7/8`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket `4/4`,
+LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
 (NTDS is covered by the execution queue below, not by the relational path).
 
 Three **separately budgeted** queues cover the threat classes this relational engine
@@ -62,7 +62,7 @@ is validated separately — see [docs/datasets.md](docs/datasets.md).
 ## Quickstart
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"   # runtime deps + pytest + ruff
 export UEBA__SECURITY__MODEL_SIGNING_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")
 
 # 1. Generate an estate with injected attacks. `headline` = the ten
@@ -119,6 +119,7 @@ python -m ueba_pipeline.cli.main walk-forward-eval \
 ## Layout
 
 ```
+pyproject.toml                  packaging, dependency extras, pytest + ruff config
 ueba_pipeline/
   engine.py                     per-view calibrated p-values, rollup, alerting
   parsing/normalize.py          channel + EventID -> canonical typed event

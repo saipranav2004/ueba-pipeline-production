@@ -1,4 +1,0 @@
-# Development / test dependencies. Kept out of requirements.txt so a production
-# image does not ship a test runner.
--r requirements.txt
-pytest==9.1.1
