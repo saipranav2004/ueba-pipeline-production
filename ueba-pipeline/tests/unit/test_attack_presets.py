@@ -39,10 +39,26 @@ def test_separately_measured_corpora_are_excluded_from_headline():
     them in the headline would understate a figure measuring a different capability.
     """
     for attack, corpus in (("insider_data_staging", INSIDER_CORPUS_ATTACKS),
+                           ("insider_share_exfiltration", INSIDER_CORPUS_ATTACKS),
                            ("nhi_schedule_hijack", NHI_CORPUS_ATTACKS)):
         assert attack in ATTACK_REGISTRY        # still injectable via `all`
         assert attack in corpus
         assert attack not in HEADLINE_ATTACKS
+
+
+def test_the_two_insider_sub_classes_stay_distinct():
+    """Rate abuse and scope abuse are different threats and different instruments.
+
+    `insider_data_staging` is deliberately novelty-free -- own account, own
+    workstation, own file server -- because that is what proves the volume
+    instrument works. `insider_share_exfiltration` is the opposite: ordinary
+    volume, but a share the account has never touched. Merging them would leave
+    nothing measuring either capability on its own, so they are asserted to be two
+    registered attacks rather than one parameterised one.
+    """
+    assert {"insider_data_staging", "insider_share_exfiltration"} <= set(INSIDER_CORPUS_ATTACKS)
+    assert ATTACK_REGISTRY["insider_data_staging"] is not \
+        ATTACK_REGISTRY["insider_share_exfiltration"]
 
 
 def test_headline_covers_the_ten_documented_techniques():
