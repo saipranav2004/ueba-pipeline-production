@@ -14,8 +14,8 @@ feature contract, and a test fails if any of them reaches a model.
 
 Every event is projected onto directed edges across several relationship views —
 account↔source, ticket-encryption context, Kerberos context, process-access,
-directory-operation — and each edge is scored for surprise under the estate's
-learned access distribution:
+directory-operation, file-share — and each edge is scored for surprise under the
+estate's learned access distribution:
 
 ```
 surprise = max( −log P(dst | src), −log P(src | dst) )
@@ -52,6 +52,11 @@ evidence, so each was given its own budget instead of being dropped:
 | execution | NTDS extraction / novel program use | 0/2 | **2/2** @ 0.90 FP/day |
 | NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
 | insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
+
+A fourth threat class — **insider scope abuse**, an authorised account reading a
+share it has never touched — is covered inside the relational queue by the `share`
+view: `0/6 → 6/6` with the headline unchanged at 54/60 @ 3.19. It is the only view
+ever added to that queue at no cost to it.
 
 See [docs/identities.md](docs/identities.md).
 
@@ -142,7 +147,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     168 tests
+tests/unit/                     177 tests
 .github/workflows/ci.yml        lint, tests (3.12/3.13), quickstart, wheel, image
 ```
 

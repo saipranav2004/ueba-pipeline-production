@@ -617,6 +617,58 @@ the estates the headline is quoted from, so tuning against them would make the
 headline a restatement of the sweep. Choosing this parameter properly requires a
 validation estate held apart from the reported one.
 
+## The telemetry audit, and the views it produced
+
+An audit of what the engine actually consumes against what the parser produces
+found the largest single bucket in a generated estate was `unknown` -- 55,869
+events, about 23% of the corpus -- telemetry no field map recognised. Adding maps
+for named pipes (Sysmon 17/18), registry (12/13) and share access (5140/5145)
+made 19,335 events per estate addressable and produced three candidate views.
+
+Measured over six seeds, both corpora, each view added to the relational queue:
+
+| arm | headline | headline FP/day | share-exfil corpus | corpus FP/day |
+|---|---|---|---|---|
+| baseline | 54/60 | 3.19 | 0/6 | 5.03 |
+| **+`share`** | **54/60** | **3.19** | **6/6** | **4.90** |
+| +`pipe` | 54/60 | 3.21 | 0/6 | 5.03 |
+| +`reg` | **40/60** | 3.50 | 0/6 | 5.03 |
+| +all three | 40/60 | 3.50 | 1/6 | 5.01 |
+
+**`share` is the only view ever added to the relational queue at no cost to it.**
+The headline is unchanged to the last digit while a structural blind spot closes
+completely, and false positives on the corpus fall slightly.
+
+**`reg` is the worst result ever measured here**: −14 detections, concentrated in
+Kerberoasting (−7) and AS-REP roasting (−5). **`+all three` collapses `share` from
+6/6 to 1/6** -- the sixth independent measurement of the displacement law.
+
+The mechanism is edge geometry, and it was measured rather than inferred:
+
+| view | mean distinct destinations per account | destinations that exist | events per account |
+|---|---|---|---|
+| `share` | **1.00** | 9 | 26.1 |
+| `pipe` | 3.79 | 7 | 10.5 |
+| `reg` | **3.98** | **4** | 39.7 |
+
+Routine share access is department-keyed, so an account touches exactly one share
+and a second is maximally surprising. An account touches essentially *all four*
+registry classes, so `reg` is a near-constant that cannot fire -- while carrying
+the highest event volume of the three, inflating every Šidák correction and
+Tippett minimum it enters. That is the whole of the −14.
+
+**The destination counts are simulator artifacts, and that is the finding.** A
+real estate has hundreds of registry locations and pipe names, and a Cobalt Strike
+pipe is novel by construction. `reg` and `pipe` therefore stay implemented and
+disabled behind `enabled_views` pending a simulator with realistic diversity and a
+pipe-based lateral-movement attack -- not deleted on a measurement their input
+could not have passed.
+
+Two other events this audit set out to model could not be: **4648** (explicit
+credentials), the strongest published credential-abuse signal, is never emitted by
+the simulator, and **4776** (NTLM) appears 37 times in 20 days across 253
+employees. Both are simulator gaps.
+
 ## Scalability
 
 Measured with `scripts/benchmark_performance.py`, on estates generated at 1×, 2×,

@@ -47,7 +47,14 @@ REMOTE_LOGON_TYPES = {"3", "10"}
 # That is the fourth independent measurement of the same law (`src_dst`, a volume
 # signal, process lineage, and now this), and the resolution is the one the others
 # arrived at: give it its own queue and its own budget rather than dropping it.
-RELATIONAL_VIEWS = frozenset({"user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op"})
+# `share` (account -> file share) is the one view ever added to this queue that
+# cost it nothing: the headline stayed at exactly 54/60 @ 3.19 FP/day over the
+# same six seeds while share-scope abuse went 0/6 -> 6/6. It is admissible where
+# `reg` and `pipe` were not because of its edge geometry -- routine share access
+# is department-keyed, so an account touches a mean of 1.00 distinct shares and a
+# second one is maximally surprising.
+RELATIONAL_VIEWS = frozenset(
+    {"user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op", "share"})
 EXECUTION_VIEWS = frozenset({"proc_exec"})
 
 

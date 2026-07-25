@@ -89,6 +89,7 @@ clothes.
 | `tgs_enc` | account → service-ticket encryption type | 4769 | Kerberoasting / RC4 service-ticket downgrade |
 | `proc_access` | `host\|source-image` → target-image | Sysmon 10 (ProcessAccess) | credential-store (lsass/ntds) dumping |
 | `dir_op` | actor → operation class | 4728/4732/4756, 4720/4726, 4662, 5136 | DCSync, privileged-group and account-lifecycle abuse |
+| `share` | actor → file share | 5140/5145 (network share access) | insider scope abuse: reading a share the account has never touched |
 
 Three design decisions inside the views are worth understanding, because each is the
 difference between signal and noise, and each was made on measured *benign novelty
@@ -98,6 +99,12 @@ can mean anything at all in that view:
 - **`user_src` keys on the device, not the IP.** Keyed on IP, ~92% of benign logons
   look like first contacts (DHCP, VPN pools, Wi-Fi vs wired), and the view is pure
   noise. Keyed on the workstation/device identity, benign novelty drops to ~4%.
+- **`share` keys on the share, not the file.** Routine share access is
+  department-keyed, so an account touches a mean of **1.00** distinct shares across
+  a 20-day estate and a second one is maximally surprising. Keyed on the individual
+  file (`RelativeTargetName`) the destination space would be near-unique per event
+  and novelty would mean nothing — the same failure `dir_op` avoids by keying on
+  the operation rather than the object.
 - **`tgs_enc` keys on the encryption type, not the SPN.** Users legitimately reach
   many services, so `(user, SPN)` novelty fires on benign churn (it collapsed graph
   recall from 43/60 to 1/60 when measured). The low-cardinality cipher is the
@@ -189,6 +196,28 @@ positives:
 - **`rare_proc`** (host → rarely-seen image) detected nothing in any configuration
   across two estate revisions (0/60 standalone). A view that never contributes a
   detection cannot justify the correction it costs.
+
+Two further views were **built and left disabled**, and the distinction matters:
+they were rejected on *this estate*, not on the idea.
+
+- **`reg`** (account → registry location class, Sysmon 12/13) is the worst view ever
+  measured here: it takes the headline from 54/60 to **40/60**, destroying
+  Kerberoasting (−7) and AS-REP roasting (−5). The mechanism is not mysterious. An
+  account touches a mean of **3.98 of the 4** registry classes this estate produces,
+  so the view is a near-constant that can never fire — while carrying the highest
+  event volume of any candidate (39.7 events per account), inflating every Šidák
+  correction and every Tippett minimum it appears in.
+- **`pipe`** (account → named pipe, Sysmon 17/18) is neutral: 54/60 either way, and
+  0/6 on every corpus. Accounts touch 3.79 of the 7 pipe names that exist here.
+
+**Both destination counts are simulator artifacts, and that is the finding.** A real
+Windows estate produces hundreds of registry locations and pipe names; a Cobalt
+Strike or PsExec pipe is novel by construction, which is exactly what `pipe` is built
+to see and exactly what published named-pipe detection uses a hard-coded name list to
+approximate. This corpus cannot exercise either view, so both stay in `edges_for`
+behind `enabled_views` awaiting a simulator with realistic registry and pipe
+diversity and a pipe-based lateral-movement attack — not deleted on a measurement
+their input could not have passed.
 
 This points at the single most important constraint on the whole detector, and it is
 counter-intuitive: **adding a view usually lowers product recall, even when the view
