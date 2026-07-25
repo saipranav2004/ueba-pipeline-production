@@ -389,13 +389,61 @@ a weekday-only batch job triggered on a Sunday, which this estate does not conta
 so it stays available behind `enabled_signals` and is not shipped on evidence that
 does not yet exist.
 
-## 16. Where this goes next
+## 16. Cadence was built for the round-the-clock cohort, and rejected
 
-- **A weekday-only NHI corpus**, to test `dow` on evidence that can actually
-  exercise it.
-- **Inter-arrival modelling** (a poller whose period changes), the natural
-  complement to hour-of-day for round-the-clock agents — the cohort neither queue
-  currently covers.
+Round-the-clock agents (a monitoring poller active in every hour) are covered by
+neither queue: they have no schedule to deviate from, and the schedule-hijack
+attack against them is session-sized rather than a volume burst. Seven of the
+eighteen NHI corpus instances target such an identity, so this is a real gap, and
+**inter-arrival modelling** is the natural instrument (Price-Williams, Heard &
+Turcotte, EISIC 2017).
+
+Building it surfaced a modelling point worth keeping: **raw event inter-arrivals
+measure the wrong thing.** An identity's activity arrives in bursts — one service
+logon emits a 4624, a 4672, a service-state change and several ticket requests
+within seconds — so the median raw gap for *every* service account is ~0.5 minutes
+while its actual polling interval is tens of minutes. The signal only exists
+between **bursts**, which is exactly the "opening event of a subsequence"
+structure the paper describes. So `cadence` groups events into bursts (a gap
+> 5 min opens a new one) and models the between-burst gaps in log-spaced bins with
+the same Dirichlet machinery as `hour`.
+
+It does not work here, and the diagnosis is specific rather than vague:
+
+| signals | recall (covered) | FP/day |
+|---|---|---|
+| **hour** (shipped) | **9/17 = 52.9%** | **0.31** |
+| cadence | 0/17 = 0% | 0.50 |
+| hour + cadence | 0/17 = 0% | 0.50 |
+
+**The attack is not a cadence anomaly.** Measured per instance, the gap preceding
+the attack burst lands squarely inside the identity's ordinary distribution:
+
+```
+svc_wsus         gap =  837m -> a bin holding 57.1% of its baseline -> 0.60 nats
+svc_exchange     gap = 1058m -> a bin holding 31.8% of its baseline -> 1.18 nats
+svc_iis_apppool  gap =   97m -> a bin holding  5.6% of its baseline -> 2.78 nats
+```
+
+An agent that fires all day long experiences a gap of that size routinely, so
+there is nothing for the model to find. The implementation is correct; the threat
+model simply does not disturb cadence. And because cadence covers **262
+identities** (nearly all of them people), fusing it reproduces the displacement
+law a fifth time — it wipes the hour signal out entirely.
+
+It is therefore **not enabled in either queue**, and kept behind `enabled_signals`
+rather than deleted, because it remains the only instrument that could cover the
+round-the-clock cohort and the estate contains no attack that exercises it. What
+*would* exercise it is a compromise that changes an agent's rhythm — a silenced
+agent, or an implant beaconing on its own interval — which this simulator does not
+yet generate.
+
+## 17. Where this goes next
+
+- **A weekday-only NHI corpus** to exercise `dow`, and a **cadence-disturbing
+  attack** (silenced agent, beaconing implant) to exercise `cadence`. Both signals
+  are implemented and both are unshipped for want of evidence, not for want of
+  code.
 - **Real-data recalibration**, the standing requirement for every figure here.
 
 ## References

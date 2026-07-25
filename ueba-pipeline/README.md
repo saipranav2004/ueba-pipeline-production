@@ -165,11 +165,10 @@ comparison harness, and real-telemetry ingestion validation.
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
 - **Round-the-clock non-human identities** (a poller active every hour) are
-  covered by no queue: they have no schedule to deviate from, so a compromise of
-  one needs an inter-arrival or volume instrument.
-- **Round-the-clock non-human identities are out of the NHI track's scope** — a
-  poller active in every hour has no schedule to deviate from, so a compromise of
-  one needs a volume or relationship instrument, not a temporal one.
+  covered by no queue: they have no schedule to deviate from. A burst-based
+  inter-arrival (`cadence`) instrument was built for exactly this cohort,
+  measured, and left unshipped — the attack it would need to see does not disturb
+  cadence. Evidence in [docs/identities.md](docs/identities.md) §16.
 - **Scale above ~300 entities is unmeasured.** O(1) counter updates predict it
   holds; that is a prediction.
 - **No multi-tenancy, RBAC, or API.** The product is a CLI.

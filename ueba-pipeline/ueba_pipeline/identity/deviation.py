@@ -111,8 +111,45 @@ MIN_BASELINE_EVENTS = 50
 # nothing (exp(-12) ~ 6e-6).
 SMOOTHING_TAU_HOURS = 1.0
 
-ALL_SIGNALS = frozenset({"hour", "dow", "volume"})
+ALL_SIGNALS = frozenset({"hour", "dow", "volume", "cadence"})
 SCHEDULE_SIGNALS = frozenset({"hour", "dow"})
+
+# --- cadence -----------------------------------------------------------------
+# An identity's activity arrives in BURSTS, not as isolated events: one service
+# logon emits a 4624, a 4672, a service-state change and a handful of ticket
+# requests within seconds. Modelling raw event inter-arrivals therefore measures
+# the burst's internal spacing, not the identity's rhythm -- measured on the
+# estate, every service account has a median raw gap of ~0.5 minutes while its
+# actual polling interval is tens of minutes.
+#
+# So events are first grouped into bursts (a gap longer than BURST_GAP_MINUTES
+# starts a new one) and the model is over the gaps BETWEEN bursts. This is the
+# structure Price-Williams, Heard & Turcotte (EISIC 2017) describe, where the
+# opening event of a subsequence is the meaningful arrival.
+BURST_GAP_MINUTES = 5.0
+# Log-spaced bin edges in minutes. Log spacing because a cadence is multiplicative:
+# the difference between 5 and 10 minutes matters, between 500 and 505 does not.
+CADENCE_BIN_EDGES = (5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0, 1440.0)
+MIN_CADENCE_BURSTS = 20      # too few bursts and a "usual gap" is not established
+
+
+def _cadence_bin(gap_minutes: float) -> int:
+    """Index of the log-spaced bin a between-burst gap falls in."""
+    for i, edge in enumerate(CADENCE_BIN_EDGES):
+        if gap_minutes < edge:
+            return i
+    return len(CADENCE_BIN_EDGES)
+
+
+def _bursts(times: Sequence[datetime]) -> List[datetime]:
+    """Start time of each burst: a gap > BURST_GAP_MINUTES opens a new one."""
+    out: List[datetime] = []
+    prev = None
+    for t in sorted(times):
+        if prev is None or (t - prev).total_seconds() / 60.0 > BURST_GAP_MINUTES:
+            out.append(t)
+        prev = t
+    return out
 
 
 def _circular_kernel(tau: float = SMOOTHING_TAU_HOURS) -> np.ndarray:
@@ -157,6 +194,12 @@ class BehaviouralDeviationTrack:
     _dow_marginal: Dict[int, float] = field(default_factory=dict)
     _total: float = 0.0
     _counts: GammaPoissonCounts = field(default_factory=GammaPoissonCounts)
+    # Cadence: per-entity distribution over between-burst gap bins.
+    _cadence_counts: Dict[str, Dict[int, float]] = field(default_factory=dict)
+    _cadence_totals: Dict[str, float] = field(default_factory=dict)
+    _cadence_marginal: Dict[int, float] = field(default_factory=dict)
+    _cadence_total: float = 0.0
+    cadence_covered: set = field(default_factory=set)
     _nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
     _kernel: np.ndarray = field(default_factory=_circular_kernel)
 
@@ -181,14 +224,17 @@ class BehaviouralDeviationTrack:
 
         for entity, when in baseline:
             self._observe(entity, when)
+        self._learn_cadence(baseline)
         base_windows = self._windows(baseline)
         for (entity, _), count in base_windows.items():
             self._counts.observe(entity, count)
 
         # Per-signal nulls, each measured on the held-out slice only.
         by_signal: Dict[str, List[float]] = {}
+        calib_gaps = self._window_gaps(calib)
         for (entity, window), count in sorted(self._windows(calib).items()):
-            for signal, s in self._window_surprises(entity, window, count):
+            for signal, s in self._window_surprises(
+                    entity, window, count, calib_gaps.get((entity, window))):
                 by_signal.setdefault(signal, []).append(s)
         self._nulls = {
             signal: EmpiricalPValue().fit(np.asarray(scores))
@@ -200,9 +246,59 @@ class BehaviouralDeviationTrack:
         # baseline than the one deployed: conservative, never optimistic.
         for entity, when in calib:
             self._observe(entity, when)
+        self._learn_cadence(calib)
         for (entity, _), count in self._windows(calib).items():
             self._counts.observe(entity, count)
         return self
+
+    def _learn_cadence(self, rows: Sequence[Tuple[str, datetime]]) -> None:
+        """Fold between-burst gaps into each entity's cadence baseline."""
+        per: Dict[str, List[datetime]] = {}
+        for entity, when in rows:
+            per.setdefault(entity, []).append(when)
+        for entity, times in per.items():
+            starts = _bursts(times)
+            for a, b in zip(starts, starts[1:]):
+                idx = _cadence_bin((b - a).total_seconds() / 60.0)
+                self._cadence_counts.setdefault(entity, {})[idx] = \
+                    self._cadence_counts.setdefault(entity, {}).get(idx, 0.0) + 1.0
+                self._cadence_totals[entity] = self._cadence_totals.get(entity, 0.0) + 1.0
+                self._cadence_marginal[idx] = self._cadence_marginal.get(idx, 0.0) + 1.0
+                self._cadence_total += 1.0
+            if self._cadence_totals.get(entity, 0.0) >= MIN_CADENCE_BURSTS:
+                self.cadence_covered.add(entity)
+
+    @staticmethod
+    def _window_gaps(rows: Sequence[Tuple[str, datetime]]) -> Dict[Tuple[str, datetime], float]:
+        """Gap, in minutes, that preceded the burst opening in each (entity, window).
+
+        A window with no new burst (activity continuing from the previous one)
+        carries no cadence evidence and is simply absent from the map.
+        """
+        per: Dict[str, List[datetime]] = {}
+        for entity, when in rows:
+            per.setdefault(entity, []).append(when)
+        out: Dict[Tuple[str, datetime], float] = {}
+        for entity, times in per.items():
+            starts = _bursts(times)
+            for a, b in zip(starts, starts[1:]):
+                key = (entity, b.replace(minute=0, second=0, microsecond=0))
+                gap = (b - a).total_seconds() / 60.0
+                # Keep the SHORTEST gap in the window: a burst arriving far sooner
+                # than usual is the anomaly a cadence model exists to see.
+                if key not in out or gap < out[key]:
+                    out[key] = gap
+        return out
+
+    def _cadence_surprise(self, entity: str, gap_minutes: float) -> float:
+        """-log P(gap bin | entity), Dirichlet-smoothed to the cohort marginal."""
+        idx = _cadence_bin(gap_minutes)
+        c = self._cadence_counts.get(entity, {}).get(idx, 0.0)
+        n = self._cadence_totals.get(entity, 0.0)
+        n_bins = len(CADENCE_BIN_EDGES) + 1
+        pi = (self._cadence_marginal.get(idx, 0.0) + 1.0) / (self._cadence_total + n_bins)
+        p = (c + self.alpha * pi) / (n + self.alpha)
+        return -math.log(max(min(p, 1.0), 1e-12))
 
     def _admit(self, rows: Sequence[Tuple[str, datetime]]) -> set:
         """Identities whose activity is concentrated enough for the schedule signals."""
@@ -283,10 +379,13 @@ class BehaviouralDeviationTrack:
         p = (c + self.alpha * pi) / (n + self.alpha)
         return -math.log(max(min(p, 1.0), 1e-12))
 
-    def _window_surprises(self, entity: str, window: datetime,
-                          count: int) -> List[Tuple[str, float]]:
+    def _window_surprises(self, entity: str, window: datetime, count: int,
+                          gap_minutes: Optional[float] = None) -> List[Tuple[str, float]]:
         """Every enabled signal that can speak about this (entity, window)."""
         out: List[Tuple[str, float]] = []
+        if ("cadence" in self.enabled_signals and gap_minutes is not None
+                and entity in self.cadence_covered):
+            out.append(("cadence", self._cadence_surprise(entity, gap_minutes)))
         if entity in self.covered:
             if "hour" in self.enabled_signals:
                 out.append(("hour", self._hour_surprise(entity, window.hour)))
@@ -310,10 +409,12 @@ class BehaviouralDeviationTrack:
         if not rows:
             return []
 
+        gaps = self._window_gaps(rows)
         best: Dict[str, Tuple[float, datetime, float, str]] = {}
         for (entity, window), count in self._windows(rows).items():
             scored = []
-            for signal, s in self._window_surprises(entity, window, count):
+            for signal, s in self._window_surprises(
+                    entity, window, count, gaps.get((entity, window))):
                 null = self._nulls.get(signal)
                 if null is not None:
                     scored.append((float(null.pvalue(s)[0]), s, signal))
