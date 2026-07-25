@@ -393,6 +393,11 @@ class BehavioralEngine:
         # silently misattribute months later.
         sessions = SessionResolver().fit(events, _norm)
         cell: dict[tuple[str, datetime], WindowDetection] = {}
+        # Batch scoring does not absorb, so the model is fixed for the whole run
+        # and the predictive p-value's prefix-sum index stays valid. Without it,
+        # each event's reverse conditional scans every principal in the estate,
+        # which makes a scoring run quadratic in estate size.
+        self.graph.freeze()
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
@@ -414,6 +419,7 @@ class BehavioralEngine:
         observed = observed_entity_windows(events, self.config.window_hours)
         sessions = SessionResolver().fit(events, _norm)
         cell: dict[tuple[str, datetime], WindowDetection] = {}
+        self.execution_graph.freeze()   # see the note in score()
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions,
                                     graph=self.execution_graph,

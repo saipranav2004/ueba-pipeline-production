@@ -619,48 +619,131 @@ validation estate held apart from the reported one.
 
 ## Scalability
 
-Measured with `scripts/benchmark_performance.py`, generating estates at 1×, 2×,
-4× and 8× headcount via the simulator's `--headcount-scale`.
+Measured with `scripts/benchmark_performance.py`, on estates generated at 1×, 2×,
+4× and 8× headcount via the simulator's `--headcount-scale`. The harness measures
+the **whole** engine: both scoring passes an operator waits for (`score` plus
+`score_queues`) and the resident state of every queue, not the relational one
+alone.
 
-| identities | events | fit ev/s | score ev/s | fit MiB | p50 µs | p99 µs | distinct edges | bundle KiB |
-|---|---|---|---|---|---|---|---|---|
-| 265 | 70,246 | 30,990 | 60,771 | 0.9 | 4.0 | 71.7 | 1,004 | 202 |
-| 518 | 137,712 | 24,718 | 76,378 | 1.9 | 4.7 | 98.7 | 1,984 | 394 |
-| 1,024 | 275,394 | 32,280 | 104,601 | 3.5 | 3.4 | 99.2 | 3,848 | 764 |
-| 2,036 | 544,323 | 31,206 | 91,735 | 7.5 | 4.9 | 102.7 | 7,693 | 1,526 |
+| employees | modelled ids | events | fit ev/s | relational ev/s | queues ev/s | both ev/s | fit MiB | rel edges | exec edges | track rows | bundle KiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 265 | 465 | 164,618 | 18,836 | 96,093 | 56,595 | 35,618 | 8.2 | 1,107 | 2,830 | 1,106 | 488 |
+| 518 | 932 | 320,299 | 19,214 | 65,329 | 44,829 | 26,586 | 16.1 | 2,111 | 5,651 | 2,120 | 884 |
+| 1,024 | 1,778 | 638,473 | 19,401 | 38,718 | 30,151 | 16,951 | 31.7 | 4,103 | 11,332 | 4,148 | 1,656 |
+| 2,036 | 3,540 | 1,263,254 | 18,311 | 17,326 | 16,479 | 8,446 | 63.2 | 8,186 | 22,621 | 8,198 | 3,164 |
 
-**Edge count grows linearly with identities, not quadratically.** 7.7× the
-identities produces 7.7× the edges. The feared O(users × destinations) blow-up
-does not occur, because each identity has a bounded working set rather than
-reaching everything. Memory and bundle size follow the same linear curve.
+"Modelled ids" counts every identity the engine scores -- service, admin and
+machine accounts as well as employees -- and is the number that drives cost.
 
-**Throughput and latency are flat.** Fit holds ~25–32k events/s and scoring
-60–105k events/s across the whole range; per-event streaming latency stays at
-~4 µs median and ~100 µs at the 99th percentile regardless of estate size. Nothing
-in the scoring path is a function of how many identities exist.
+**Edge count and memory grow linearly with identities.** 7.7× the employees gives
+7.4× the relational edges, 8.0× the execution edges, 7.4× the track rows and 7.7×
+the memory. The feared O(users × destinations) blow-up does not occur, because
+each identity has a bounded working set rather than reaching everything. The
+execution queue's graph is the larger of the two by roughly 2.7×, which an earlier
+version of this table missed entirely by measuring `engine.graph` alone.
 
-Extrapolating the measured linear fit: 10,000 identities implies roughly 38k
-edges and ~37 MiB of detector state; 100,000 implies ~370 MiB and a ~75 MB
-bundle. Both remain tractable, and count-min sketching (MIDAS's mechanism) is the
-documented fallback if exact counters ever stop being.
+**Fit throughput is flat**, at ~18–19k events/s across the whole range. It is
+lower than the ~31k this document previously reported because fit now builds two
+graphs and two deviation tracks rather than one graph.
+
+### Scoring is quadratic in estate size, and partly fixed
+
+**Scoring throughput is not flat, and the previous claim that it was is
+withdrawn.** A scoring run takes 1.7s at 265 employees and 72.9s at 2,036 -- each
+doubling of the estate costs roughly 3.5–4× the time, which is quadratic, not
+linear. Per-event p99 latency moves with it, 154 µs to 977 µs.
+
+The cause is not the counters, which are O(1) to update as claimed. It is the
+predictive p-value. Heard & Rubin-Delanchy eq. (2) sums over every outcome at
+least as improbable as the realised one, and in the **reverse** conditional
+P(src | dst) the set of outcomes is the set of principals -- which grows with the
+estate by definition. Profiling a scoring run at 2,036 employees put 53s of 100s
+inside `_directional_pvalue`, at ~1,090 dictionary lookups per call.
+
+`AuthGraphAnomalyDetector.freeze()` fixes the part that is fixable, exactly. For
+any outcome a principal has never taken, `a*_b' = alpha * pi_b'` is strictly
+increasing in that outcome's marginal count, so "at least as improbable" becomes a
+threshold on the count -- one binary search against a sorted array with prefix
+sums. Only the principal's own neighbours need individual treatment. Batch scoring
+does not absorb, so the index is built once per run; the streaming path keeps the
+direct scan, because rebuilding a sorted index per event costs more than it saves.
+
+Verified against the scan it replaces over all 55,933 edges of the four fitted
+estates: **zero disagreements about `p == 1.0`** -- the classification the engine
+reads as evidence -- and a worst relative difference of 4.1e-16, two units in the
+last place. The headline is unchanged at 54/60 = 90.0% @ 3.19 FP/day with the same
+per-technique breakdown. `tests/unit/test_pvalue_index.py` pins the equivalence.
+
+Measured gain, relational scoring:
+
+| employees | before | after | speedup |
+|---|---|---|---|
+| 265 | 74,811 ev/s | 96,093 ev/s | 1.28× |
+| 518 | 46,301 ev/s | 65,329 ev/s | 1.41× |
+| 1,024 | 26,316 ev/s | 38,718 ev/s | 1.47× |
+| 2,036 | 12,902 ev/s | 17,326 ev/s | 1.34× |
+
+**It is still quadratic**, and the reason is specific. The index assumes a
+principal's neighbourhood is small. In the reverse direction of a view whose
+destination alphabet is tiny, it is not -- the in-neighbourhood of a destination
+*is* the estate:
+
+| view | direction | distinct keys | mean neighbours | max |
+|---|---|---|---|---|
+| `user_src` | either | 1,807 | 1.1 | 21 |
+| `proc_access` | reverse | **1** | **2,026** | 2,026 |
+| `kerb_ctx` | reverse | **2** | **1,016** | 2,031 |
+| `tgs_enc` | reverse | **3** | **717** | 2,040 |
+| `proc_exec` | reverse | 44 | 514 | 2,024 |
+
+`user_src`, the high-cardinality view, is fully fixed. The others are not, and the
+reverse direction cannot simply be dropped: `proc_access` has exactly one
+destination, so its forward conditional is trivially 1.0 and the reverse carries
+the entire signal.
+
+The identified next step is a second index, keyed per destination rather than per
+count: for the handful of destinations with large in-neighbourhoods, precompute
+the sorted `a*_b'` values and their prefix sums at freeze time, turning those
+calls into a binary search as well. The memory is bounded by (marginal size ×
+number of such destinations), which is small precisely because their
+neighbourhoods are large -- about 89k entries for `proc_exec` at 2,036 employees.
+This is specified but not implemented.
+
+### What this means operationally
+
+At 2,036 employees a full scoring pass over 20 days of telemetry takes ~150s
+(both queues), against a 20-day batch. That is comfortable. The quadratic term is
+what bounds the useful range, not memory: extrapolating, 10,000 employees implies
+~40k relational edges and ~310 MiB of state -- both fine -- but a scoring pass
+several times longer than linear scaling would predict. Count-min sketching
+(MIDAS's mechanism) remains the documented fallback for memory; it is not the
+constraint that binds first.
 
 ### Recall under a fixed analyst budget declines as the estate grows
 
 This is a property of budget-based alerting, not of the model, and it is the more
 important operational finding:
 
-| estate | identities | budget/day | recall | FP/day |
-|---|---|---|---|---|
-| 1× | 265 | 5 | 10/10 | 3.77 |
-| 2× | 518 | 5 | 9/10 | 3.90 |
-| 2× | 518 | 9.8 (scaled) | **10/10** | 8.55 |
-| 4× | 1,024 | 5 | 8/10 | 4.02 |
-| 4× | 1,024 | 19.3 (scaled) | **10/10** | 17.99 |
+| estate | employees | budget/day | recall | FP/day | FP per identity/day |
+|---|---|---|---|---|---|
+| 1× | 265 | 5 | 10/10 | 3.78 | 0.0143 |
+| 2× | 518 | 5 | 10/10 | 3.78 | 0.0073 |
+| 2× | 518 | 9.8 (scaled) | **10/10** | 8.57 | 0.0165 |
+| 4× | 1,024 | 5 | 6/10 | 4.28 | 0.0042 |
+| 4× | 1,024 | 19.3 (scaled) | **9/10** | 18.14 | 0.0177 |
+| 8× | 2,036 | 5 | 4/10 | 4.54 | 0.0022 |
+| 8× | 2,036 | 38.4 (scaled) | **10/10** | 37.16 | 0.0183 |
 
-At a fixed five alerts a day, four times the identities compete for the same five
-queue slots and two true positives fall below the cut. Scaling the budget with the
-estate recovers full recall, which shows the ranking itself is size-invariant: the
-false-positive *rate per identity* stays near 0.015/day across the whole range.
+At a fixed five alerts a day, eight times the identities compete for the same five
+queue slots and six true positives fall below the cut. Scaling the budget with the
+estate recovers full recall at 8×, which shows the ranking itself is
+size-invariant: the false-positive *rate per identity* holds near 0.018/day once
+the budget is scaled, across a 7.7× range of estate sizes.
+
+The one soft spot is 4×, where the scaled budget recovers 9/10 rather than 10/10.
+A single attack sits below the cut there and above it at 8×; with ten attacks per
+estate a single instance is inside the noise of one seed, and this table is one
+seed per size. It is reported rather than smoothed away.
 
 The operational consequence is a capacity question, not a tuning one. Holding
 recall constant as an estate grows costs analyst time proportionally; holding

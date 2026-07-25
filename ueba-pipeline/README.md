@@ -141,7 +141,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     161 tests
+tests/unit/                     166 tests
 .github/workflows/ci.yml        lint, tests (3.12/3.13), quickstart, wheel, image
 ```
 
@@ -169,6 +169,13 @@ comparison harness, and real-telemetry ingestion validation.
   inter-arrival (`cadence`) instrument was built for exactly this cohort,
   measured, and left unshipped — the attack it would need to see does not disturb
   cadence. Evidence in [docs/identities.md](docs/identities.md) §16.
-- **Scale above ~300 entities is unmeasured.** O(1) counter updates predict it
-  holds; that is a prediction.
+- **Scoring is quadratic in estate size.** Measured 1.7s at 265 employees and
+  72.9s at 2,036 — each doubling costs ~3.5–4× the time. Memory and edge count
+  are linear as designed; the cost is the predictive p-value's sum over
+  principals. Partly fixed (1.3–1.5×, verified exact to 2 ULP), with the residual
+  cause and the remaining fix specified in
+  [docs/evaluation.md](docs/evaluation.md#scalability).
+- **Recall falls under a fixed alert budget as the estate grows** — 10/10 at 265
+  employees, 4/10 at 2,036 on five alerts/day. Scaling the budget with the estate
+  restores it. This is a capacity trade-off the engine surfaces, not hides.
 - **No multi-tenancy, RBAC, or API.** The product is a CLI.

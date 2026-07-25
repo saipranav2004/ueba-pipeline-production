@@ -24,6 +24,7 @@ attacker cannot normalise their own behaviour by repetition.
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -63,6 +64,32 @@ DIR_OP_CLASS = {
     "4724": "pwreset",      "4738": "acctchange",
     "4662": "adobjaccess",  "5136": "attrmodify",
 }
+
+
+def _build_index(marg: dict[str, float]) -> tuple:
+    """Sorted marginal counts plus prefix sums of ``count + 1``.
+
+    ``count + 1`` because pi_b' = (c_b' + 1) / denom -- the +1 is the uniform
+    Dirichlet pseudo-count, so summing (count + 1) and scaling once at the end is
+    the same arithmetic as summing each pi separately, with one division instead
+    of one per outcome.
+
+    Two properties make a plain running sum the right accumulator here, where the
+    scan path needs ``math.fsum(sorted(...))``. The array is sorted, so the order
+    is canonical rather than whatever order a dict happens to be in -- which
+    matters, because a bundle reloaded from JSON rebuilds its dicts differently
+    and a few-ULP difference there was once enough to turn a p of exactly 1.0 into
+    0.999999999 and invent an alert. And every count is an integer-valued float
+    (they are only ever incremented by 1.0), so partial sums stay exact integers
+    well inside 2**53 for any estate this will see.
+    """
+    counts = sorted(marg.values())
+    prefix = [0.0]
+    running = 0.0
+    for i, c in enumerate(counts, start=1):
+        running += c
+        prefix.append(running + i)
+    return counts, prefix
 
 
 def _basename(path) -> str:
@@ -158,6 +185,53 @@ class AuthGraphAnomalyDetector:
     _src_totals: dict[str, dict[str, float]] = field(default_factory=dict)
     _dst_totals: dict[str, dict[str, float]] = field(default_factory=dict)
     _view_totals: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    # Prefix-sum index over each marginal, built on demand by :meth:`freeze` and
+    # discarded by :meth:`_absorb`. Derived state only -- never serialised, and
+    # rebuilt from the counters above. See ``_directional_pvalue``.
+    _pvalue_index: dict[tuple[str, str], tuple] = field(default_factory=dict)
+    # Adjacency of the edge table, in both directions, so the small set of
+    # neighbours a principal actually has can be enumerated without scanning the
+    # estate. Also derived; also rebuilt rather than stored.
+    _adj: dict[tuple[str, str], dict[str, dict[str, float]]] = field(default_factory=dict)
+
+    # -- eq. (2) acceleration -----------------------------------------------
+    def freeze(self) -> AuthGraphAnomalyDetector:
+        """Build the indexes that make the predictive p-value sub-linear.
+
+        The Heard & Rubin-Delanchy sum runs over every outcome at least as
+        improbable as the realised one, so written directly it scans the view's
+        whole marginal. In the reverse direction that marginal is the set of
+        *principals*, which by definition grows with the estate -- measured at
+        260 sources for 265 employees and 2,031 for 2,036, making per-event
+        scoring O(identities) and a scoring run quadratic. Measured end to end:
+        2.2s at 265 employees, 97.9s at 2,036.
+
+        The sum decomposes exactly. For any outcome the source has never taken,
+        ``a*_b' = alpha * pi_b'``, which is strictly increasing in that outcome's
+        marginal count -- so "at least as improbable" becomes a threshold on the
+        count, answerable with one binary search against a sorted array and its
+        prefix sums. Only the source's own neighbours, a set bounded by its
+        working set rather than by the estate, need individual treatment.
+
+        Valid until the next :meth:`_absorb`. Scoring does not absorb, so a batch
+        run builds this once; the streaming path keeps the direct scan, which is
+        cheaper than rebuilding an index per event.
+        """
+        self._pvalue_index.clear()
+        self._adj.clear()
+        for view, edges in self._edges.items():
+            fwd: dict[str, dict[str, float]] = {}
+            rev: dict[str, dict[str, float]] = {}
+            for (s, d), c in edges.items():
+                fwd.setdefault(s, {})[d] = c
+                rev.setdefault(d, {})[s] = c
+            self._adj[(view, "dst")] = fwd    # forward: key is the source
+            self._adj[(view, "src")] = rev    # reverse: key is the destination
+        for view, marg in self._dst_counts.items():
+            self._pvalue_index[(view, "dst")] = _build_index(marg)
+        for view, marg in self._src_counts.items():
+            self._pvalue_index[(view, "src")] = _build_index(marg)
+        return self
 
     # -- edge extraction ----------------------------------------------------
     def edges_for(self, event) -> list[tuple[str, tuple[str, str]]]:
@@ -403,6 +477,11 @@ class AuthGraphAnomalyDetector:
         marg = counts_b.get(view, {})
         if not marg:
             return 1.0
+        forward = counts_b is self._dst_counts
+        index = self._pvalue_index.get((view, "dst" if forward else "src"))
+        if index is not None:
+            return self._directional_pvalue_indexed(
+                view, key_a, key_b, marg, totals_a, forward, index)
         total = self._view_totals[view]
         denom_pi = total + max(len(marg), 1)
         n_a = totals_a.get(view, {}).get(key_a, 0.0)
@@ -452,10 +531,79 @@ class AuthGraphAnomalyDetector:
         total_mass = math.fsum(sorted(contributions))
         return float(min(max(total_mass / (n_a + a), 1e-12), 1.0))
 
+    def _directional_pvalue_indexed(self, view: str, key_a: str, key_b: str,
+                                    marg, totals_a, forward: bool,
+                                    index) -> float:
+        """The same statistic as ``_directional_pvalue``, without the full scan.
+
+        Outcomes split into two groups. Those ``key_a`` has never taken carry
+        ``a*_b' = alpha * pi_b'``, which is increasing in the outcome's marginal
+        count, so "at least as improbable as the realised outcome" is the count
+        threshold solved for below and the included mass is one prefix-sum lookup.
+        Those ``key_a`` HAS taken carry their edge count too and are corrected
+        individually -- there are as many of them as the principal's working set,
+        which measurement shows is bounded rather than growing with the estate.
+        """
+        counts_sorted, prefix = index
+        a = self.config.alpha
+        n_outcomes = len(counts_sorted)
+        denom_pi = self._view_totals[view] + max(n_outcomes, 1)
+        n_a = totals_a.get(view, {}).get(key_a, 0.0)
+        neighbours = self._adj.get((view, "dst" if forward else "src"), {}).get(key_a, {})
+
+        c_ab = neighbours.get(key_b, 0.0)
+        pi_b = (marg.get(key_b, 0.0) + 1.0) / denom_pi
+        star_obs = c_ab + a * pi_b
+
+        # alpha * (count + 1) / denom_pi <= star_obs  <=>  count <= threshold.
+        threshold = star_obs * denom_pi / a - 1.0
+        k = bisect.bisect_right(counts_sorted, threshold)
+        mass_plus_one = prefix[k]          # sum of (count + 1) over those k outcomes
+        n_above = n_outcomes - k           # outcomes excluded on the base term alone
+
+        # Everything needing individual treatment: the principal's neighbours, and
+        # the realised outcome (which contributes star_obs by definition).
+        special = dict(neighbours)
+        special.setdefault(key_b, c_ab)
+        contributions = []
+        excluded = False
+        for b_prime, c in special.items():
+            count = marg.get(b_prime, 0.0)
+            if count <= threshold:
+                mass_plus_one -= count + 1.0   # retract the base-only contribution
+            else:
+                n_above -= 1                   # re-decided individually just below
+            if b_prime == key_b:
+                contributions.append(star_obs)
+                continue
+            star = a * (count + 1.0) / denom_pi + c
+            if star <= star_obs:
+                contributions.append(star)
+            else:
+                excluded = True
+        if n_above > 0:
+            excluded = True
+        if not excluded:
+            # Identical reasoning to the scan path: the realised outcome is the
+            # most probable one, every outcome is at least as improbable, and the
+            # mass is exactly (n_a + alpha). Return exactly 1.0 -- "no evidence" --
+            # rather than a rounded 0.9999999999999999 that the engine would read
+            # as a detection.
+            return 1.0
+        total_mass = a * mass_plus_one / denom_pi + math.fsum(sorted(contributions))
+        return float(min(max(total_mass / (n_a + a), 1e-12), 1.0))
+
     def _absorb(self, view: str, edge: tuple[str, str], score: float) -> None:
         # MIDAS-F: do not let a flagged edge normalise itself into the baseline.
         if score >= self.config.absorb_surprise:
             return
+        # Any absorbed edge moves a marginal, so the prefix-sum index built by
+        # freeze() no longer describes the model. Dropping it returns scoring to
+        # the direct scan, which is the correct behaviour for the streaming path:
+        # rebuilding a sorted index per event costs more than the scan it saves.
+        if self._pvalue_index:
+            self._pvalue_index.clear()
+            self._adj.clear()
         self._principals[view].add(edge[0])
         self._edges[view][edge] = self._edges[view].get(edge, 0.0) + 1.0
         for store, k in ((self._dst_counts, edge[1]), (self._src_counts, edge[0]),
