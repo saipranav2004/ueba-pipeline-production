@@ -657,6 +657,24 @@ registry classes, so `reg` is a near-constant that cannot fire -- while carrying
 the highest event volume of the three, inflating every Šidák correction and
 Tippett minimum it enters. That is the whole of the −14.
 
+Re-measured *after* `share` shipped, so the baseline is the queue an operator
+actually runs, each candidate is individually destructive rather than only in
+combination:
+
+| arm (baseline = shipped queue, including `share`) | share-exfil corpus | FP/day |
+|---|---|---|
+| baseline | **6/6** | 4.90 |
+| +`pipe` | 1/6 | 5.01 |
+| +`reg` | 2/6 | 4.99 |
+| +all three | 1/6 | 5.01 |
+
+This corrects a reading of the first table. Against the *old* baseline `pipe`
+looked merely neutral -- 54/60 either way, 0/6 on a corpus where nothing detected
+anything. Against the shipped queue it costs **five of six** detections on its
+own, and `reg` costs four. The displacement is not a property of stacking three
+views; each broad, low-novelty view displaces narrow evidence by itself, which is
+the sixth and sharpest measurement of the law this engine keeps running into.
+
 **The destination counts are simulator artifacts, and that is the finding.** A
 real estate has hundreds of registry locations and pipe names, and a Cobalt Strike
 pipe is novel by construction. `reg` and `pipe` therefore stay implemented and

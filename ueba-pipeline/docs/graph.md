@@ -207,8 +207,11 @@ they were rejected on *this estate*, not on the idea.
   so the view is a near-constant that can never fire — while carrying the highest
   event volume of any candidate (39.7 events per account), inflating every Šidák
   correction and every Tippett minimum it appears in.
-- **`pipe`** (account → named pipe, Sysmon 17/18) is neutral: 54/60 either way, and
-  0/6 on every corpus. Accounts touch 3.79 of the 7 pipe names that exist here.
+- **`pipe`** (account → named pipe, Sysmon 17/18) leaves the headline alone (54/60)
+  but, measured against the *shipped* queue, costs **five of six** share-exfil
+  detections on its own — `reg` costs four. Neither needs the other to displace;
+  each is a broad, low-novelty view competing for the same Tippett minimum.
+  Accounts touch 3.79 of the 7 pipe names that exist here.
 
 **Both destination counts are simulator artifacts, and that is the finding.** A real
 Windows estate produces hundreds of registry locations and pipe names; a Cobalt
