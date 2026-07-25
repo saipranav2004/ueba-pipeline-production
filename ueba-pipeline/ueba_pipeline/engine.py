@@ -85,6 +85,7 @@ import numpy as np
 from ueba_pipeline.features import build_capability_manifest, observed_entity_windows
 from ueba_pipeline.graph.auth_graph_anomaly import (
     AuthGraphAnomalyDetector, AuthGraphConfig, DIR_OP_CLASS,
+    EXECUTION_VIEWS, RELATIONAL_VIEWS,
 )
 from ueba_pipeline.graph.sessions import SessionResolver
 from ueba_pipeline.models.fisher import benjamini_hochberg, sidak
@@ -196,6 +197,16 @@ class EngineConfig:
     # identity/deviation.py). Set either to 0 to silence that queue.
     nhi_budget_per_day: float = 0.5
     insider_budget_per_day: float = 0.5
+    # Execution queue (account -> program). Own budget: measured, running it
+    # inside the relational budget solves NTDS (0/2 -> 2/2) but costs five
+    # detections elsewhere by displacing Kerberos evidence.
+    #
+    # 1.0 rather than the 0.75 that first reaches full NTDS recall: recall is flat
+    # at 2/2 from 0.75 all the way to 5/day (only false positives grow), but it
+    # falls to 0/2 at 0.5 -- so 0.75 sits on a cliff edge and 1.0 buys margin for
+    # 0.19 FP/day. Choosing the cheapest point that keeps recall would be selection
+    # on the estates the figure is reported from.
+    execution_budget_per_day: float = 1.0
     # How a raw graph statistic becomes a p-value.
     #   "predictive" -- the model's own discrete predictive p-value (Heard &
     #                   Rubin-Delanchy 2016, eq. 2). SHIPPED. No empirical floor,
@@ -216,7 +227,14 @@ class EngineConfig:
 @dataclass
 class BehavioralEngine:
     config: EngineConfig = field(default_factory=EngineConfig)
-    graph: AuthGraphAnomalyDetector = field(default_factory=lambda: AuthGraphAnomalyDetector(config=AuthGraphConfig()))
+    graph: AuthGraphAnomalyDetector = field(
+        default_factory=lambda: AuthGraphAnomalyDetector(
+            config=AuthGraphConfig(enabled_views=RELATIONAL_VIEWS)))
+    # Execution queue's own detector, restricted to the execution views.
+    execution_graph: AuthGraphAnomalyDetector = field(
+        default_factory=lambda: AuthGraphAnomalyDetector(
+            config=AuthGraphConfig(enabled_views=EXECUTION_VIEWS)))
+    _execution_nulls: Dict[str, EmpiricalPValue] = field(default_factory=dict)
     manifest: object = None
     # One frozen benign null PER graph view, so each relationship type is scored
     # against its own baseline and cannot pollute the others.
@@ -244,7 +262,14 @@ class BehavioralEngine:
         free, not because it is load bearing -- see docs/evaluation.md.
         """
         self.manifest = build_capability_manifest(events, config_capability)
-        self._fit_graph(_time_sorted_graph_events(events), contaminated)
+        graph_events = _time_sorted_graph_events(events)
+        self._graph_nulls, self.view_stats = self._fit_graph(
+            graph_events, contaminated, graph=self.graph)
+        # The execution queue is fit the same way on its own detector, so its null
+        # is calibrated independently of the relational views.
+        self._execution_nulls, exec_stats = self._fit_graph(
+            graph_events, contaminated, graph=self.execution_graph)
+        self.view_stats = {**self.view_stats, **exec_stats}
         self._fit_tracks(events)
         return self
 
@@ -264,7 +289,8 @@ class BehavioralEngine:
         self.nhi_track = nhi_schedule_queue().fit(events)
         self.insider_track = insider_volume_queue().fit(events)
 
-    def _fit_graph(self, graph_events: List, contaminated: Optional[set] = None) -> None:
+    def _fit_graph(self, graph_events: List, contaminated: Optional[set] = None,
+                   graph=None) -> tuple:
         """Build the graph baseline and freeze one benign null per view.
 
         The null is calibrated on a HELD-OUT slice of the training period, scored
@@ -292,6 +318,7 @@ class BehavioralEngine:
         slightly smaller baseline than the one deployed, which can only make it
         conservative (it over-states benign novelty), never optimistic.
         """
+        graph = self.graph if graph is None else graph
         evs = [e for e in graph_events
                if not (contaminated and _event_key(e) in contaminated)]
         cut = max(1, int(len(evs) * (1.0 - self.config.null_calibration_fraction)))
@@ -300,29 +327,29 @@ class BehavioralEngine:
             baseline_evs, calib_evs = evs, evs
 
         for e in baseline_evs:
-            self.graph.observe_baseline(e)
+            graph.observe_baseline(e)
 
         by_view: Dict[str, list] = {}
         novelty: Dict[str, list] = {}          # view -> [edges_scored, edges_novel]
         for e in calib_evs:
-            for view, edge in self.graph.edges_for(e):
+            for view, edge in graph.edges_for(e):
                 st = novelty.setdefault(view, [0, 0])
                 st[0] += 1
                 # An edge is "seen" iff it is already in the baseline counters;
                 # _edges keys ARE the seen-set (both are written together in
                 # _absorb), so no separate seen-set is kept.
-                if edge not in self.graph._edges[view]:
+                if edge not in graph._edges[view]:
                     st[1] += 1
-            for view, s in self.graph.score_event_views(e, absorb=False):
-                by_view.setdefault(view, []).append(s)
-        self._graph_nulls = {
+            for view, sc in graph.score_event_views(e, absorb=False):
+                by_view.setdefault(view, []).append(sc)
+        nulls = {
             view: EmpiricalPValue().fit(np.asarray(scores))
             for view, scores in by_view.items()
         }
 
         # Fold the calibration slice into the deployed baseline.
         for e in calib_evs:
-            self.graph.observe_baseline(e)
+            graph.observe_baseline(e)
         # Per-view benign novelty rate: the measurable property that decides
         # whether a relationship type carries anomaly signal at all. A view whose
         # benign edges are routinely novel (a high rate) cannot separate a first
@@ -332,10 +359,11 @@ class BehavioralEngine:
         # so a novel edge is genuine evidence. This is the evidence-based test for
         # admitting a new view, in place of per-attack judgement; it is reported at
         # train time and belongs in any review of a proposed relationship type.
-        self.view_stats = {
+        stats = {
             view: {"edges": n, "novel_rate": (nov / n) if n else 0.0}
             for view, (n, nov) in sorted(novelty.items())
         }
+        return nulls, stats
 
     # -- batch scoring (PURE: does not mutate detector state) --------------
     def score(self, events: List) -> Tuple[List[WindowDetection], List[EntityRisk]]:
@@ -355,6 +383,34 @@ class BehavioralEngine:
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
         return detections, self._rollup(detections, observed, observed_days=max(days, 1.0))
 
+    def score_execution(self, events: List) -> List[EntityRisk]:
+        """Rank identities by novel program execution. SEPARATE queue and budget.
+
+        Same machinery as :meth:`score` -- Dirichlet edge surprise, per-view frozen
+        null, Tippett within the cell, Sidak over an entity's windows -- run on the
+        execution views only, with its own budget. Kept out of the relational queue
+        because measurement showed it displaces Kerberos evidence there while
+        solving NTDS extraction here.
+        """
+        if not self._execution_nulls:
+            return []
+        observed = observed_entity_windows(events, self.config.window_hours)
+        sessions = SessionResolver().fit(events, _norm)
+        cell: Dict[Tuple[str, datetime], WindowDetection] = {}
+        for e in _time_sorted_graph_events(events):
+            self._score_graph_event(e, cell, absorb=False, sessions=sessions,
+                                    graph=self.execution_graph,
+                                    nulls=self._execution_nulls)
+        detections = [d for d in cell.values() if d.graph_p < 1.0]
+        hours = [d.hour for d in detections] or [h for _, h in observed]
+        days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
+        budget = self.config.alert_budget_per_day
+        try:
+            self.config.alert_budget_per_day = self.config.execution_budget_per_day
+            return self._rollup(detections, observed, observed_days=max(days, 1.0))
+        finally:
+            self.config.alert_budget_per_day = budget
+
     def score_queues(self, events: List) -> Dict[str, list]:
         """Score the behavioural-deviation queues. SEPARATE from ``score``.
 
@@ -366,6 +422,8 @@ class BehavioralEngine:
         it does not mutate any track.
         """
         out: Dict[str, list] = {}
+        if self.config.execution_budget_per_day > 0 and self._execution_nulls:
+            out["execution"] = self.score_execution(events)
         for name, budget in (("nhi", self.config.nhi_budget_per_day),
                              ("insider", self.config.insider_budget_per_day)):
             track = getattr(self, f"{name}_track", None)
@@ -444,8 +502,14 @@ class BehavioralEngine:
         return host or "endpoint"
 
     def _score_graph_event(self, e, cell: Dict, absorb: bool,
-                           sessions: Optional[SessionResolver] = None) -> None:
-        if not self._graph_nulls:
+                           sessions: Optional[SessionResolver] = None,
+                           graph=None, nulls=None) -> None:
+        # ``graph``/``nulls`` default to the relational detector. The execution
+        # queue passes its own pair so both queues run one implementation of
+        # scoring, correction and rollup -- and one set of bugs.
+        graph = self.graph if graph is None else graph
+        nulls = self._graph_nulls if nulls is None else nulls
+        if not nulls:
             return
         # Score each view against its own frozen null, then take the most
         # significant view (Tippett), Sidak-corrected for the number of views
@@ -453,21 +517,21 @@ class BehavioralEngine:
         # contributes no evidence (p = 1.0) rather than a spurious extreme.
         ps = []
         tested_edges = []
-        for view, edge in self.graph.edges_for(e):
+        for view, edge in graph.edges_for(e):
             tested_edges.append((view, edge))
         if self.config.pvalue_mode == "predictive":
             # The model's own predictive p-value: no empirical null, so no
             # 1/(n_benign+1) floor to tie sparse-view evidence together.
             for view, edge in tested_edges:
-                if view in self._graph_nulls:
-                    ps.append(self.graph.predictive_pvalue(view, edge))
+                if view in nulls:
+                    ps.append(graph.predictive_pvalue(view, edge))
             if absorb:
-                self.graph.score_event_views(e, absorb=True)
+                graph.score_event_views(e, absorb=True)
         else:
-            for view, s in self.graph.score_event_views(e, absorb=absorb):
-                null = self._graph_nulls.get(view)
+            for view, sc in graph.score_event_views(e, absorb=absorb):
+                null = nulls.get(view)
                 if null is not None:
-                    ps.append(float(null.pvalue(s)[0]))
+                    ps.append(float(null.pvalue(sc)[0]))
         if not ps:
             return
         p = sidak(min(ps), len(ps))

@@ -40,13 +40,15 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
 Pass-the-Hash `8/9`, AS-REP roasting `6/6`, password spray `6/6`, golden ticket
-`4/4`, LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`.
+`4/4`, LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
+(NTDS is covered by the execution queue below, not by the relational path).
 
-Two **separately budgeted** queues cover the threat classes this relational engine
+Three **separately budgeted** queues cover the threat classes this relational engine
 is blind to by construction, because neither creates a new relationship:
 
 | queue | threat class | relational engine | this track |
 |---|---|---|---|
+| execution | NTDS extraction / novel program use | 0/2 | **2/2** @ 0.90 FP/day |
 | NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
 | insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
 
@@ -140,7 +142,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     155 tests
+tests/unit/                     158 tests
 ```
 
 ## Model persistence
@@ -162,10 +164,9 @@ comparison harness, and real-telemetry ingestion validation.
 - **No real-world detection-performance validation.** Every recall and
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
-- **NTDS dump (0/2)** leaves no relational trace at all — its tools run
-  legitimately on domain controllers, so the discriminating signal is a command
-  line, not a relationship. (Account manipulation was the other long-standing
-  failure and is now 4/5; see [docs/evaluation.md](docs/evaluation.md).)
+- **Round-the-clock non-human identities** (a poller active every hour) are
+  covered by no queue: they have no schedule to deviate from, so a compromise of
+  one needs an inter-arrival or volume instrument.
 - **Round-the-clock non-human identities are out of the NHI track's scope** — a
   poller active in every hour has no schedule to deviate from, so a compromise of
   one needs a volume or relationship instrument, not a temporal one.

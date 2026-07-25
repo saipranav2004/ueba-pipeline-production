@@ -227,3 +227,43 @@ def test_predictive_pvalue_is_insertion_order_independent():
         store["dir_op"] = dict(reversed(list(store["dir_op"].items())))
     d._edges["dir_op"] = dict(reversed(list(d._edges["dir_op"].items())))
     assert d.predictive_pvalue("dir_op", ("admin1", "groupadd")) == before
+
+
+# ── proc_exec: identity-keyed program execution ──────────────────────────────
+def test_proc_exec_is_keyed_on_the_identity_not_the_host():
+    """"Has THIS ACCOUNT run this program?" -- not "is this program rare here?".
+
+    The removed `rare_proc` view asked the host-keyed question, which has no signal
+    on a domain controller where ntdsutil runs legitimately. That is precisely why
+    NTDS extraction was undetectable.
+    """
+    from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector
+
+    d = AuthGraphAnomalyDetector()
+    ev = SimpleNamespace(
+        event_type="sysmon_1", computer_name="DC01",
+        event_time=datetime(2025, 1, 6, tzinfo=timezone.utc),
+        fields={"user_norm": "adm_t0_rverma", "image": r"C:\Windows\System32\ntdsutil.exe"})
+    assert d.edges_for(ev) == [("proc_exec", ("adm_t0_rverma", "ntdsutil.exe"))]
+
+
+def test_proc_exec_skips_machine_accounts():
+    """Machine accounts are not part of the human/service behavioural model."""
+    from ueba_pipeline.graph.auth_graph_anomaly import AuthGraphAnomalyDetector
+
+    d = AuthGraphAnomalyDetector()
+    ev = SimpleNamespace(
+        event_type="sysmon_1", computer_name="DC01",
+        event_time=datetime(2025, 1, 6, tzinfo=timezone.utc),
+        fields={"user_norm": "dc01$", "image": r"C:\Windows\System32\svchost.exe"})
+    assert d.edges_for(ev) == []
+
+
+def test_execution_and_relational_views_are_disjoint():
+    """The two queues must not share a view, or the execution signal would re-enter
+    the relational budget it was measured to disrupt."""
+    from ueba_pipeline.graph.auth_graph_anomaly import (
+        EXECUTION_VIEWS, RELATIONAL_VIEWS,
+    )
+    assert RELATIONAL_VIEWS.isdisjoint(EXECUTION_VIEWS)
+    assert "proc_exec" in EXECUTION_VIEWS

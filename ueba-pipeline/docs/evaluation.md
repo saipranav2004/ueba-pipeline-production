@@ -543,6 +543,49 @@ displace relational evidence the way `src_dst`, a volume signal and a
 process-lineage view each did. That is the "separate queues, not better fusion"
 direction, implemented and measured.
 
+## The execution queue: NTDS extraction, and the displacement law again
+
+`proc_exec` projects **(account -> program executed)** from Sysmon process
+creation. It is keyed on the *identity*, which is the whole point: a removed
+`rare_proc` view asked the host-keyed question ("is this program rare on this
+machine?"), which has no signal on a domain controller where `ntdsutil` runs
+legitimately -- precisely why NTDS extraction was undetectable.
+
+Its admission profile is excellent: **8,030 baseline edges at 0.4% benign
+novelty**, so a novel (account -> program) edge is real evidence.
+
+Run **inside the relational queue** it behaves exactly as three earlier signals
+did -- it solves its own problem and damages everything else:
+
+| configuration | headline | FP/day | NTDS |
+|---|---|---|---|
+| relational views only | **54/60** | **3.19** | 0/2 |
+| + `proc_exec` fused in | 49/60 | 3.29 | **2/2** |
+
+Kerberoasting falls 7/8 -> 3/8 and AS-REP roasting 5/6 -> 2/6: `proc_exec` is
+high-volume, so it competes for queue slots in every cell it touches and displaces
+the narrower Kerberos evidence. This is the **fourth** independent measurement of
+the same law (`src_dst`, a volume signal, process lineage, and now this).
+
+So it ships as its **own queue with its own budget**, using the same machinery
+(Dirichlet edge surprise, its own frozen null, Tippett, Šidák) on its own detector:
+
+| queue | recall | FP identities/day |
+|---|---|---|
+| relational (unchanged) | 54/60 = 90.0% | 3.19 |
+| **execution** | **NTDS 2/2** | **0.90** |
+
+Recall is flat at 2/2 from a budget of 0.75 all the way to 5/day -- only false
+positives grow -- but drops to 0/2 at 0.5. The default is **1.0**, not the 0.75
+that first reaches full recall, because 0.75 sits on that cliff edge; the extra
+0.19 FP/day buys margin. Picking the cheapest passing point would be selection on
+the estates the figure is reported from.
+
+**On a corpus saturated with NTDS attacks (78 of them) the queue reaches 2/78**,
+because eight alerts cannot cover seventy-eight attacks: there the budget binds,
+not the detector. The relational queue scores 0/78 on that same corpus, confirming
+the technique is structurally invisible to it.
+
 ## Parameter sensitivity
 
 `scripts/sweep_hyperparameters.py` moves each free parameter across its plausible
@@ -653,9 +696,11 @@ Windows Security and Sysmon captures.
    changed nothing, because the binding problem was that floor *ties* made
    peak-hour attribution degenerate. A model-based p-value has no floor and no
    ties. The remaining miss is a single instance across six seeds.
-3. **NTDS dump (0/2).** Its tools (`vssadmin`, `ntdsutil`) run legitimately on
-   domain controllers, so it leaves no novel relational trace; the discriminating
-   signal is a command line or an execution sequence.
+3. **NTDS dump (0/2 in the relational queue, 2/2 in the execution queue).** Its
+   tools (`vssadmin`, `ntdsutil`) run legitimately on domain controllers, so it
+   leaves no novel *authentication* trace. The discriminating signal is which
+   account ran the program, and it is covered by the execution queue ("The
+   execution queue", below) rather than by the relational path.
 4. **n = 60.** A development baseline, not a product claim.
 5. **`alpha = 1.0`** is an uninformative default, not a tuned value.
 

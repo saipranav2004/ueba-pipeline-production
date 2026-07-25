@@ -36,6 +36,21 @@ from typing import Dict, Optional, Tuple
 # are ignored for the host->host projection.
 REMOTE_LOGON_TYPES = {"3", "10"}
 
+# Which views belong to which QUEUE. This split is measured, not stylistic.
+#
+# `proc_exec` (account -> program executed) solves NTDS extraction outright --
+# 0/2 to 2/2 -- because that attack leaves no other relational trace. But run
+# inside the relational queue's shared alert budget it takes the headline from
+# 54/60 to 49/60, collapsing Kerberoasting (7/8 -> 3/8) and AS-REP roasting
+# (5/6 -> 2/6): it is a high-volume view, so it competes for queue slots in every
+# cell it touches and displaces the narrower Kerberos evidence.
+#
+# That is the fourth independent measurement of the same law (`src_dst`, a volume
+# signal, process lineage, and now this), and the resolution is the one the others
+# arrived at: give it its own queue and its own budget rather than dropping it.
+RELATIONAL_VIEWS = frozenset({"user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op"})
+EXECUTION_VIEWS = frozenset({"proc_exec"})
+
 
 
 
@@ -215,6 +230,25 @@ class AuthGraphAnomalyDetector:
             spn = _norm(f.get("service_name"))
             if user and enc and not spn.endswith("$"):
                 out.append(("tgs_enc", (user, enc)))
+        elif et == "sysmon_1":
+            # (account -> program it executed). Keyed on the IDENTITY, not the host.
+            #
+            # A previous `rare_proc` view keyed this on (host -> image) and was
+            # removed after detecting nothing in any configuration. That is a
+            # different question: "is this program rare on this machine?" On a
+            # domain controller the credential-extraction tools (ntdsutil,
+            # vssadmin) run legitimately, so the host-keyed form has no signal by
+            # construction -- which is exactly why NTDS extraction was undetectable.
+            #
+            # "Has THIS ACCOUNT ever run this program?" is the identity-centric
+            # question the rest of the engine asks, and it is the one that
+            # separates an administrator doing maintenance from an administrator's
+            # credential being used to dump the directory. No tool list, no
+            # allow/deny: novelty and rarity decide, as in every other view.
+            user = _norm(f.get("user_norm") or f.get("user"))
+            image = _basename(f.get("image"))
+            if user and image and not user.endswith("$"):
+                out.append(("proc_exec", (user, image)))
         elif et in DIR_OP_CLASS:
             # Privileged directory operation: (actor -> operation class).
             #

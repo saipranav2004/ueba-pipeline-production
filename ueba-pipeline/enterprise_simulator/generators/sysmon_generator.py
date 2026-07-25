@@ -55,6 +55,19 @@ _SYSMON_TASKS: Dict[str, str] = {
 }
 
 # ── Sysmon envelope ───────────────────────────────────────────────────────────
+
+def _win_basename(path: str) -> str:
+    """Basename of a WINDOWS path, on any host OS.
+
+    ``os.path.basename`` splits on the *platform* separator, so on Linux -- where
+    this simulator actually runs -- it returns a backslash path unchanged. That
+    silently broke three things at once: OriginalFileName was emitted as a full
+    path instead of the bare PE-header name real Sysmon writes (making every
+    process look renamed to a masquerade check), and the PE-metadata and
+    working-directory lookups, both keyed on bare filenames, never matched.
+    """
+    return (path or "").replace("/", "\\").rsplit("\\", 1)[-1]
+
 def _sysmon_envelope(
     event_id:   str,
     computer:   str,
@@ -139,7 +152,7 @@ def gen_eid1(
     (2020-10-08) and ultimatewindowssecurity.com Event 90001 (2024-04-28).
     OriginalFileName derived from image basename — same as Image unless masquerading.
     """
-    image_basename = os.path.basename(proc.image) if proc.image else "unknown.exe"
+    image_basename = _win_basename(proc.image) if proc.image else "unknown.exe"
     user_str       = f"{user_domain}\\{proc.user}" if "\\" not in proc.user else proc.user
 
     event_data = {
@@ -245,7 +258,7 @@ def gen_eid7(
     Verified field names from ultimatewindowssecurity.com Event 90007
     (2017-04-28) and Splunk Security Content Dataset 45512fa5 (2023-09-12).
     """
-    dll_basename = os.path.basename(dll_path) if dll_path else "unknown.dll"
+    dll_basename = _win_basename(dll_path) if dll_path else "unknown.dll"
     user_str     = f"{user_domain}\\{proc.user}" if "\\" not in proc.user else proc.user
 
     event_data = {
@@ -475,7 +488,7 @@ _PE_META: Dict[str, Dict[str, str]] = {
 
 
 def _pe_field(image: str, field: str, default: str) -> str:
-    basename = os.path.basename(image) if image else ""
+    basename = _win_basename(image) if image else ""
     meta     = _PE_META.get(basename, {})
     return meta.get(field, default)
 
@@ -504,7 +517,7 @@ def _working_dir(image: str) -> str:
         "node.exe":         "C:\\Program Files\\nodejs\\",
         "git.exe":          "C:\\Program Files\\Git\\cmd\\",
     }
-    basename = os.path.basename(image) if image else ""
+    basename = _win_basename(image) if image else ""
     return _DIRS.get(basename, "C:\\Windows\\System32\\")
 
 

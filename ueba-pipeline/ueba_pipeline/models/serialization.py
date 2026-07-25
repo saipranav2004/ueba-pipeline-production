@@ -274,6 +274,15 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
         arrays.update(track_arrays)
         tracks[name] = st
 
+    # The execution queue's own detector and null travel with the bundle too;
+    # without them a reloaded engine would silently lose that queue entirely.
+    execution_nulls = {}
+    for view, pv in engine._execution_nulls.items():
+        st = pvalue_to_state(pv)
+        if st.pop("_array") is not None:
+            arrays[f"enull_{view}"] = np.asarray(pv._grid, dtype=np.float64)
+        execution_nulls[view] = {**st, "has_array": f"enull_{view}" in arrays}
+
     cfg = engine.config
     state = {
         "serialization_version": SERIALIZATION_VERSION,
@@ -285,10 +294,13 @@ def engine_to_bundle(engine) -> Tuple[dict, Dict[str, np.ndarray]]:
             "null_calibration_fraction": cfg.null_calibration_fraction,
             "nhi_budget_per_day": cfg.nhi_budget_per_day,
             "insider_budget_per_day": cfg.insider_budget_per_day,
+            "execution_budget_per_day": cfg.execution_budget_per_day,
             "pvalue_mode": cfg.pvalue_mode,
         },
         "graph": graph_to_state(engine.graph),
         "graph_nulls": graph_nulls,
+        "execution_graph": graph_to_state(engine.execution_graph),
+        "execution_nulls": execution_nulls,
         "manifest": manifest_to_state(engine.manifest),
         "view_stats": engine.view_stats,
         "tracks": tracks,
@@ -316,6 +328,14 @@ def engine_from_bundle(state: dict, arrays: Dict[str, np.ndarray]):
         arr = arrays.get(f"gnull_{view}") if st.get("has_array") else None
         graph_nulls[view] = pvalue_from_state({**st, "_array": arr})
     engine._graph_nulls = graph_nulls
+
+    if "execution_graph" in state:
+        engine.execution_graph = graph_from_state(state["execution_graph"])
+        engine._execution_nulls = {
+            view: pvalue_from_state({**st, "_array": arrays.get(f"enull_{view}")
+                                     if st.get("has_array") else None})
+            for view, st in state.get("execution_nulls", {}).items()
+        }
 
     for name, st in state.get("tracks", {}).items():
         if name in ("nhi", "insider"):

@@ -115,7 +115,7 @@ def test_score_stream_emits_detections_and_stays_pure_in_batch():
     # evidence-relative: with no baseline nothing is surprising.
     base = [_sysmon10("wininit.exe", "lsass.exe", minute=m) for m in range(0, 600, 60)]
     # Build the baseline and calibrate the per-view nulls exactly as fit() does.
-    eng._fit_graph(base)
+    eng._graph_nulls, eng.view_stats = eng._fit_graph(base)
     stream = [_sysmon10("rundll32.exe", "lsass.exe", minute=700)]
     out = list(eng.score_stream(iter(stream)))
     assert any(d.graph_p < 1.0 for d in out), "stream must emit the novel-edge detection"
@@ -123,7 +123,7 @@ def test_score_stream_emits_detections_and_stays_pure_in_batch():
     # score_stream adapts (absorb=True) while score() must not: verify that
     # asymmetry holds.
     eng2 = BehavioralEngine(config=EngineConfig())
-    eng2._fit_graph(base)
+    eng2._graph_nulls, eng2.view_stats = eng2._fit_graph(base)
     probe = _sysmon10("rundll32.exe", "lsass.exe", minute=700)
     first = eng2.graph.score_event(probe, absorb=False)
     second = eng2.graph.score_event(probe, absorb=False)
@@ -166,6 +166,6 @@ def test_fit_calibrates_one_null_per_graph_view():
     null, so each relationship type is scored against its own baseline."""
     eng = BehavioralEngine(config=EngineConfig())
     base = ([_sysmon10("wininit.exe", "lsass.exe", minute=m) for m in range(0, 600, 30)])
-    eng._fit_graph(base)
+    eng._graph_nulls, eng.view_stats = eng._fit_graph(base)
     assert "proc_access" in eng._graph_nulls
     assert all(isinstance(n, EmpiricalPValue) for n in eng._graph_nulls.values())
