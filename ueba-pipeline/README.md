@@ -43,8 +43,9 @@ ticket `7/8`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket `4/4`,
 LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
 (NTDS is covered by the execution queue below, not by the relational path).
 
-Three **separately budgeted** queues cover the threat classes this relational engine
-is blind to by construction, because neither creates a new relationship:
+Three **separately budgeted** queues cover the threat classes the relational
+queue is blind to. Each was measured *inside* that queue first and displaced its
+evidence, so each was given its own budget instead of being dropped:
 
 | queue | threat class | relational engine | this track |
 |---|---|---|---|
@@ -73,17 +74,14 @@ python enterprise_simulator/run_simulation.py --days 20 --seed 20250106 \
     --inject-attacks headline --attack-count 30 --attack-placement spread
 
 # 2. Fit the engine -> signed, non-executable bundle
-python -m ueba_pipeline.cli.main train \
-    --data-dir enterprise_simulator/output --model-dir artifacts/models/engine
+ueba train --data-dir enterprise_simulator/output --model-dir artifacts/models/engine
 
-# 3. Score -> ranked entity alerts (lower p = worse)
-python -m ueba_pipeline.cli.main score \
-    --data-dir enterprise_simulator/output --model-dir artifacts/models/engine \
+# 3. Score -> the relational ranking, then each separately budgeted queue
+ueba score --data-dir enterprise_simulator/output --model-dir artifacts/models/engine \
     --alert-budget-per-day 5
 
 # 4. Causal out-of-time evaluation
-python -m ueba_pipeline.cli.main walk-forward-eval \
-    --data-dir enterprise_simulator/output --contamination none
+ueba walk-forward-eval --data-dir enterprise_simulator/output --contamination none
 ```
 
 ## Commands
@@ -143,7 +141,8 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     158 tests
+tests/unit/                     161 tests
+.github/workflows/ci.yml        lint, tests (3.12/3.13), quickstart, wheel, image
 ```
 
 ## Model persistence

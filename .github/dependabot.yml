@@ -1,0 +1,23 @@
+version: 2
+
+# Pinning actions to commit SHAs is only safe if something proposes the bumps;
+# otherwise the pin quietly becomes a way to stay on a version with a known CVE.
+# Dependabot rewrites the SHA and updates the trailing version comment, so a
+# human reviews a real diff rather than a moving tag.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+
+  # The Python dependencies carry deliberate upper bounds (a major release can
+  # silently change numerical behaviour in a detector), so these updates are
+  # expected to be occasional and to need the benchmark re-run before merge.
+  - package-ecosystem: pip
+    directory: /ueba-pipeline
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deps"

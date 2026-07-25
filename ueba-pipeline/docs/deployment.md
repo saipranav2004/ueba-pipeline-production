@@ -11,23 +11,64 @@ not.
 | file ingestion | run end to end |
 | the deviation queues in the signed bundle | round-trip verified exact; `train` fits them, `score` emits them as separate queues |
 | Kafka consumer (`ingestion/source.py`) | implemented; exercised against a mock in the unit suite |
-| `docker/Dockerfile`, both compose files, `deploy/k8s/` | schema-valid, **never executed** — no Docker daemon in the authoring environment |
+| `docker/Dockerfile` | built and its entrypoint run by the `image` CI job; **never executed in the authoring environment** (no Docker daemon there) |
+| both compose files, `deploy/k8s/` | schema-valid, **never executed** |
 
-Nothing in the container or Kubernetes path should be treated as regression
-tested. Treat first use as a bring-up.
+The compose and Kubernetes paths should not be treated as regression tested.
+Treat first use as a bring-up. The image itself is built on every push.
+
+## Installing
+
+`pyproject.toml` is the single source of truth for dependencies. There is no
+`requirements.txt`; the extras carry the distinction that file used to make in
+comments.
+
+```bash
+pip install .                 # the detection path: numpy, scipy, pydantic, PyYAML, networkx
+pip install ".[dev]"          # + pytest and ruff, to run the suite and the linter
+pip install ".[kafka]"        # + confluent-kafka, only if consuming from a broker
+pip install ".[benchmark]"    # + scikit-learn and xgboost, only for `model-benchmark`
+```
+
+A production deployment installs the base set. `[benchmark]` is deliberately
+separate: `model_benchmark` imports scikit-learn and xgboost lazily, so an
+install that never runs the comparison never carries a gradient booster.
 
 ## Running locally
 
-The engine is a CLI. It needs a signing key and a directory of JSONL telemetry:
+Installing puts a `ueba` console script on the path; `python -m
+ueba_pipeline.cli.main` remains equivalent. It needs a signing key and a
+directory of JSONL telemetry:
 
 ```bash
 export UEBA__SECURITY__MODEL_SIGNING_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")
 
-python -m ueba_pipeline.cli.main train --data-dir /path/to/logs \
-    --model-dir artifacts/models/engine
-python -m ueba_pipeline.cli.main score --data-dir /path/to/logs \
-    --model-dir artifacts/models/engine --alert-budget-per-day 5
+ueba train --data-dir /path/to/logs --model-dir artifacts/models/engine
+ueba score --data-dir /path/to/logs --model-dir artifacts/models/engine \
+    --alert-budget-per-day 5
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request. It exists so the
+claims in this repository are checkable by someone who is not the author:
+
+| job | what it establishes |
+|---|---|
+| `ruff` | the committed lint ruleset passes on the whole tree |
+| `pytest` (3.12, 3.13) | the suite passes on the declared floor and the next version |
+| `quickstart end-to-end` | the README's documented commands still compose — simulate, train, score, evaluate |
+| `build + install the wheel` | the package works once distributed, not just from a source checkout |
+| `container image builds` | the Dockerfile still builds and its entrypoint runs |
+
+Two deliberate choices. The test job installs `[dev]` only, without
+`[benchmark]`, so an optional dependency leaking onto the detection path fails
+there. And the signing key is minted per run from the run id rather than read
+from a repository secret — it only has to exist for the length of the job, and a
+test key that is never stored cannot leak.
+
+Third-party actions are pinned to full commit SHAs, not tags: a tag is a movable
+pointer. Dependabot proposes the bumps so the pin does not silently rot.
 
 ## The signing key
 
