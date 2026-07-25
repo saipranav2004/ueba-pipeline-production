@@ -60,18 +60,45 @@ def test_shortest_path_to_tier0_is_populated_for_reachable_user():
     assert alice["path_to_tier0"][-1] in ("GG-Admins-Tier0", "dc01")
 
 
-def test_render_html_is_self_contained_and_has_no_placeholders():
+def test_render_html_has_no_placeholders():
     g = _tiny_graph_with_tier0()
     html = render_html(g, title="Test Graph")
     assert "<!DOCTYPE html>" in html
     assert "__DATA__" not in html
     assert "__TITLE__" not in html
+    assert "__MINIGRAPH__" not in html
     assert "Test Graph" in html
     # The embedded data must be valid JSON.
     m = re.search(r"const DATA = (\{.*?\});", html, re.S)
     assert m, "embedded DATA block not found"
     data = json.loads(m.group(1))
     assert len(data["nodes"]) == 3
+
+
+def test_render_html_references_no_external_resource():
+    """"Standalone" has to mean it renders with the network unplugged.
+
+    This assertion used to be only in a test's NAME -- the old
+    `test_render_html_is_self_contained_...` checked placeholders and nothing
+    else, which is exactly how a `<script src="https://cdnjs...">` survived in a
+    file the README advertised as standalone. An air-gapped SOC is the normal
+    deployment for this artifact, and a security product should not be fetching
+    an unpinned third-party script at render time either way.
+    """
+    html = render_html(_tiny_graph_with_tier0(), title="Test Graph")
+    for pattern in (r"src\s*=\s*[\"']https?://", r"href\s*=\s*[\"']https?://",
+                    r"@import\s+url\(", r"fetch\s*\(", r"XMLHttpRequest"):
+        assert not re.search(pattern, html, re.I), f"external reference: {pattern}"
+    # The XML namespace is a URI, not a fetch, and is the one allowed occurrence.
+    externals = set(re.findall(r"https?://[^\s\"'<>)]+", html))
+    assert externals <= {"http://www.w3.org/2000/svg"}, f"unexpected URLs: {externals}"
+
+
+def test_layout_engine_is_inlined_not_linked():
+    html = render_html(_tiny_graph_with_tier0(), title="Test Graph")
+    # The force simulation must be present as source, not as a reference.
+    assert "ForceGraph" in html and "attachZoom" in html
+    assert "requestAnimationFrame" in html
 
 
 def test_isolated_node_has_no_path():

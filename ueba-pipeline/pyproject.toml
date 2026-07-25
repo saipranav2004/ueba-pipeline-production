@@ -56,6 +56,11 @@ ueba = "ueba_pipeline.cli.main:main"
 # One source of truth for the version: the package's own __version__.
 version = { attr = "ueba_pipeline.__version__" }
 
+[tool.setuptools.package-data]
+# The graph view inlines this script into its output so the rendered HTML is a
+# single self-contained artifact. It must therefore ship inside the wheel.
+"ueba_pipeline.graph" = ["assets/*.js"]
+
 [tool.setuptools.packages.find]
 # `enterprise_simulator` is a development and evaluation tool, not part of the
 # product, so it is deliberately not packaged. The container image copies it in
@@ -111,6 +116,7 @@ ignore = [
 # inventory table readable. E501 is therefore not enforced there -- everything
 # else is.
 "enterprise_simulator/**" = ["E402", "E501"]
-# Embeds a self-contained D3 visualisation as an HTML/JS template string. The
-# long lines are JavaScript, not Python, and Python's limit does not describe them.
+# Embeds an HTML template as a string. The long lines are markup and CSS, not
+# Python, and Python's limit does not describe them. (The layout script itself now
+# lives in graph/assets/minigraph.js, as real source rather than a string.)
 "ueba_pipeline/graph/visualize.py" = ["E501"]

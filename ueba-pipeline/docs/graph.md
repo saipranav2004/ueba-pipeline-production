@@ -210,7 +210,17 @@ the full per-view ablation table.
 `graph/identity_graph.py`. This is **analyst tooling, not detection.** It answers a
 question behaviour cannot: an account that has done nothing unusual may still be one
 hop from a Tier-0 asset. Its only consumer is the `graph-viz` CLI, which renders the
-graph and its scores to standalone HTML.
+graph and its scores to a single self-contained HTML file.
+
+"Self-contained" is enforced, not asserted: the force-directed layout is a
+vendored script (`graph/assets/minigraph.js`) inlined into the output, and a test
+fails on any `src`, `href`, `@import`, or `fetch` pointing at a URL. It previously
+loaded D3 from a CDN, which meant the file rendered blank on an air-gapped host
+and a security product pulled an unpinned third-party script every time an analyst
+opened its own output. The replacement implements only the four forces that were
+configured, following the published d3-force 3.0.0 algorithm; measured against
+real D3 on the same 200-node graph it reproduces the layout to a
+pairwise-distance correlation of 0.9999 and a median-distance ratio of 0.998.
 
 **It is not part of any alert.** No code path multiplies a behavioural p-value by a
 structural risk. If structural risk is ever fused into scoring, the honest way in is

@@ -17,9 +17,13 @@ What the view shows:
   - Clicking a node highlights its shortest path to the nearest Tier-0 asset —
     the concrete attack path an operator wants to see.
 
-The layout runs in the browser (D3 force simulation) so this module only has to
-emit data + a small template; it does no layout math in Python. D3 is loaded
-from a CDN with an offline-safe fallback message if unavailable.
+The layout runs in the browser so this module only has to emit data + a small
+template; it does no layout math in Python. The force simulation is a vendored,
+self-contained script (assets/minigraph.js) inlined into the output: this file is
+handed to an analyst and is described as standalone, and an air-gapped SOC is the
+normal case for it rather than the exception. It previously fetched D3 from a CDN,
+which made "standalone" untrue and had a security product pull an unpinned
+third-party script at render time.
 
 References:
   - Microsoft AD Administrative Tier Model ("Securing privileged access").
@@ -29,6 +33,8 @@ References:
 from __future__ import annotations
 
 import json
+from functools import lru_cache
+from pathlib import Path
 
 import networkx as nx
 
@@ -188,12 +194,18 @@ def render_html(graph, title: str = "Identity Graph", max_nodes: int = 400) -> s
     build_visualization_payload); pass max_nodes=0 to render everything."""
     payload = build_visualization_payload(graph, max_nodes=max_nodes)
     data_json = json.dumps(payload)
+    # Inlined rather than referenced, so the written file is one artifact an
+    # analyst can copy to an isolated host and open.
+    engine_js = _load_engine_js()
     # The template is intentionally plain: one <script> of data, one of D3
     # rendering. All interaction (drag, zoom, click-to-trace-path, legend
     # toggles) is client-side.
-    return _HTML_TEMPLATE.replace("__TITLE__", title).replace(
-        "__DATA__", data_json
-    )
+    # __DATA__ and __MINIGRAPH__ are substituted last and are never re-scanned,
+    # so a payload cannot inject a placeholder that expands to script.
+    return (_HTML_TEMPLATE
+            .replace("__TITLE__", title)
+            .replace("__MINIGRAPH__", engine_js)
+            .replace("__DATA__", data_json))
 
 
 def write_html(graph, path: str, title: str = "Identity Graph",
@@ -204,6 +216,16 @@ def write_html(graph, path: str, title: str = "Identity Graph",
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
+
+
+@lru_cache(maxsize=1)
+def _load_engine_js() -> str:
+    """The vendored force-layout script, read from the package.
+
+    Kept as a .js file rather than a Python string so it stays lintable,
+    diffable, and reviewable as source. Packaged via [tool.setuptools.package-data].
+    """
+    return (Path(__file__).parent / "assets" / "minigraph.js").read_text(encoding="utf-8")
 
 
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -244,16 +266,11 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .link.dim{stroke-opacity:.05;}
   .label{fill:var(--ink);font-size:9px;pointer-events:none;}
   .label.dim{opacity:.1;}
-  #fallback{display:none;padding:40px;color:var(--muted);}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="graph">
-    <div id="fallback">D3 could not be loaded (offline). The graph data is
-      embedded in this file's &lt;script&gt; block and can be rendered with any
-      D3 v7 host.</div>
-  </div>
+  <div id="graph"></div>
   <div id="side">
     <h1>__TITLE__</h1>
     <div class="sub">Identity graph structural view. Node size = graph risk.
@@ -268,124 +285,186 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 </div>
 <script>const DATA = __DATA__;</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>__MINIGRAPH__</script>
 <script>
 (function(){
-  if (typeof d3 === "undefined") {
-    document.getElementById("fallback").style.display = "block";
-    return;
-  }
   const colors = DATA.colors;
-  document.getElementById("s_nodes").textContent = DATA.stats.n_nodes;
-  document.getElementById("s_edges").textContent = DATA.stats.n_edges;
-  document.getElementById("s_tier0").textContent = DATA.stats.n_tier0;
+  const $ = id => document.getElementById(id);
+  $("s_nodes").textContent = DATA.stats.n_nodes;
+  $("s_edges").textContent = DATA.stats.n_edges;
+  $("s_tier0").textContent = DATA.stats.n_tier0;
   if (DATA.stats.truncated) {
-    document.getElementById("shown_row").style.display = "flex";
-    document.getElementById("s_shown").textContent = DATA.stats.n_shown;
+    $("shown_row").style.display = "flex";
+    $("s_shown").textContent = DATA.stats.n_shown;
     var note = document.createElement("div");
     note.className = "sub";
     note.style.marginTop = "10px";
     note.textContent = "Large graph: showing the " + DATA.stats.n_shown +
       " highest-risk entities plus all Tier-0 assets and the nodes on their " +
       "attack paths. " + DATA.stats.n_nodes + " total in the graph.";
-    document.getElementById("legend").parentNode.insertBefore(
-      note, document.getElementById("legend"));
+    $("legend").parentNode.insertBefore(note, $("legend"));
   }
 
-  const el = document.getElementById("graph");
+  const el = $("graph");
   const W = el.clientWidth, H = el.clientHeight;
-  const svg = d3.select("#graph").append("svg");
-  const g = svg.append("g");
-  svg.call(d3.zoom().scaleExtent([0.15, 6]).on("zoom", e => g.attr("transform", e.transform)));
+  const svg = svgEl("svg", {width: "100%", height: "100%"});
+  const g = svgEl("g", {});
+  svg.appendChild(g);
+  el.appendChild(svg);
 
   const idset = new Set(DATA.nodes.map(n => n.id));
   const links = DATA.edges.filter(e => idset.has(e.source) && idset.has(e.target))
     .map(e => Object.assign({}, e));
   const nodes = DATA.nodes.map(n => Object.assign({}, n));
-  const rscale = d3.scaleSqrt().domain([0, d3.max(nodes, n => n.risk) || 1]).range([3.5, 16]);
+  const maxRisk = nodes.reduce((m, n) => Math.max(m, n.risk), 0);
+  const rscale = sqrtScale(maxRisk, 3.5, 16);
+  const radiusOf = d => rscale(d.risk);
 
-  const sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(38).strength(.4))
-    .force("charge", d3.forceManyBody().strength(-70))
-    .force("center", d3.forceCenter(W/2, H/2))
-    .force("collide", d3.forceCollide().radius(d => rscale(d.risk) + 2));
-
-  const link = g.append("g").selectAll("line").data(links).join("line")
-    .attr("class", "link");
-  const node = g.append("g").selectAll("circle").data(nodes).join("circle")
-    .attr("class", d => "node" + (d.tier0 ? " tier0" : ""))
-    .attr("r", d => rscale(d.risk))
-    .attr("fill", d => colors[d.type] || colors.unknown)
-    .call(d3.drag()
-      .on("start", (e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
-      .on("drag", (e,d)=>{d.fx=e.x;d.fy=e.y;})
-      .on("end", (e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}))
-    .on("click", (e,d)=>selectNode(d));
-  const label = g.append("g").selectAll("text").data(nodes.filter(n=>n.tier0||n.risk>0.25))
-    .join("text").attr("class","label").text(d=>d.id).attr("dx",6).attr("dy",3);
-
-  sim.on("tick", () => {
-    link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
-        .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
-    node.attr("cx",d=>d.x).attr("cy",d=>d.y);
-    label.attr("x",d=>d.x).attr("y",d=>d.y);
+  const sim = new ForceGraph(nodes, links, {
+    linkDistance: 38, linkStrength: 0.4, charge: -70,
+    radius: d => radiusOf(d) + 2, cx: W / 2, cy: H / 2,
   });
 
-  // Legend with per-type toggle.
-  const types = Array.from(new Set(nodes.map(n=>n.type)));
-  const hidden = new Set();
-  const legend = d3.select("#legend");
-  types.forEach(t => {
-    const row = legend.append("div").attr("class","legrow").on("click", function(){
-      if(hidden.has(t)){hidden.delete(t);d3.select(this).classed("off",false);}
-      else{hidden.add(t);d3.select(this).classed("off",true);}
-      applyFilter();
+  // Elements are created once and mutated on tick; the original rebound data on
+  // every frame, which is the same work with more indirection.
+  const linkG = svgEl("g", {}), nodeG = svgEl("g", {}), labelG = svgEl("g", {});
+  g.appendChild(linkG); g.appendChild(nodeG); g.appendChild(labelG);
+
+  sim.links.forEach(l => {
+    l._el = svgEl("line", {"class": "link"});
+    linkG.appendChild(l._el);
+  });
+  nodes.forEach(d => {
+    d._el = svgEl("circle", {
+      "class": "node" + (d.tier0 ? " tier0" : ""),
+      r: radiusOf(d), fill: colors[d.type] || colors.unknown,
     });
-    row.append("span").attr("class","dot").style("background", colors[t]||colors.unknown);
-    row.append("span").text(t + " (" + nodes.filter(n=>n.type===t).length + ")");
+    d._el.addEventListener("click", e => { e.stopPropagation(); selectNode(d); });
+    attachDrag(d);
+    nodeG.appendChild(d._el);
+    if (d.tier0 || d.risk > 0.25) {
+      d._label = svgEl("text", {"class": "label", dx: 6, dy: 3});
+      d._label.textContent = d.id;
+      labelG.appendChild(d._label);
+    }
   });
 
-  function applyFilter(){
-    node.style("display", d => hidden.has(d.type) ? "none" : null);
-    label.style("display", d => hidden.has(d.type) ? "none" : null);
-    link.style("display", d => (hidden.has(d.source.type)||hidden.has(d.target.type)) ? "none" : null);
+  function attachDrag(d) {
+    let dragging = false;
+    d._el.addEventListener("pointerdown", e => {
+      e.stopPropagation();
+      dragging = true;
+      d.fx = d.x; d.fy = d.y;
+      sim.reheat(0.3); sim.run(draw);
+      d._el.setPointerCapture(e.pointerId);
+    });
+    d._el.addEventListener("pointermove", e => {
+      if (!dragging) return;
+      // Screen -> layout coordinates, undoing the zoom transform.
+      const t = zoom.transform, r = svg.getBoundingClientRect();
+      d.fx = (e.clientX - r.left - t.x) / t.k;
+      d.fy = (e.clientY - r.top - t.y) / t.k;
+    });
+    d._el.addEventListener("pointerup", e => {
+      dragging = false; d.fx = null; d.fy = null; sim.reheat(0);
+      if (d._el.hasPointerCapture(e.pointerId)) d._el.releasePointerCapture(e.pointerId);
+    });
   }
 
-  function selectNode(d){
+  const zoom = attachZoom(svg, g, 0.15, 6);
+
+  function draw() {
+    for (const l of sim.links) {
+      l._el.setAttribute("x1", l.source.x); l._el.setAttribute("y1", l.source.y);
+      l._el.setAttribute("x2", l.target.x); l._el.setAttribute("y2", l.target.y);
+    }
+    for (const d of nodes) {
+      d._el.setAttribute("cx", d.x); d._el.setAttribute("cy", d.y);
+      if (d._label) { d._label.setAttribute("x", d.x); d._label.setAttribute("y", d.y); }
+    }
+  }
+  sim.run(draw);
+
+  // Legend with per-type toggle.
+  const types = Array.from(new Set(nodes.map(n => n.type)));
+  const hidden = new Set();
+  const legend = $("legend");
+  types.forEach(t => {
+    const row = document.createElement("div");
+    row.className = "legrow";
+    row.addEventListener("click", () => {
+      if (hidden.has(t)) { hidden.delete(t); row.classList.remove("off"); }
+      else { hidden.add(t); row.classList.add("off"); }
+      applyFilter();
+    });
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = colors[t] || colors.unknown;
+    const txt = document.createElement("span");
+    txt.textContent = t + " (" + nodes.filter(n => n.type === t).length + ")";
+    row.appendChild(dot); row.appendChild(txt);
+    legend.appendChild(row);
+  });
+
+  const show = (elm, on) => { if (elm) elm.style.display = on ? "" : "none"; };
+
+  function applyFilter() {
+    for (const d of nodes) {
+      show(d._el, !hidden.has(d.type));
+      show(d._label, !hidden.has(d.type));
+    }
+    for (const l of sim.links) {
+      show(l._el, !(hidden.has(l.source.type) || hidden.has(l.target.type)));
+    }
+  }
+
+  const cls = (elm, name, on) => { if (elm) elm.classList.toggle(name, !!on); };
+
+  function clearSelection() {
+    for (const d of nodes) { cls(d._el, "dim", false); cls(d._label, "dim", false); }
+    for (const l of sim.links) { cls(l._el, "path", false); cls(l._el, "dim", false); }
+    $("detail").innerHTML = '<div class="hint">No node selected.</div>';
+  }
+
+  function selectNode(d) {
     const path = d.path_to_tier0 || [];
     const pathSet = new Set(path);
     const pathEdges = new Set();
-    for(let i=0;i<path.length-1;i++){pathEdges.add(path[i]+"|"+path[i+1]);pathEdges.add(path[i+1]+"|"+path[i]);}
-    node.classed("dim", n => path.length ? !pathSet.has(n.id) : false);
-    label.classed("dim", n => path.length ? !pathSet.has(n.id) : false);
-    link.classed("path", l => pathEdges.has(l.source.id+"|"+l.target.id))
-        .classed("dim", l => path.length ? !pathEdges.has(l.source.id+"|"+l.target.id) : false);
-    const hops = d.hops_to_tier0==null ? "unreachable" : d.hops_to_tier0;
-    let html = '<div class="name">'+d.id+'</div>';
-    html += '<div><span class="k">type:</span> '+d.type+(d.tier0?' <b style="color:var(--tier0)">[Tier-0]</b>':'')+'</div>';
-    html += '<div><span class="k">composite risk:</span> '+d.risk.toFixed(3)+'</div>';
-    html += '<div><span class="k">hops to Tier-0:</span> '+hops+'</div>';
-    html += '<div><span class="k">degree cent.:</span> '+d.degree.toFixed(3)+'</div>';
-    html += '<div><span class="k">betweenness:</span> '+d.betweenness.toFixed(3)+'</div>';
-    html += '<div><span class="k">pagerank:</span> '+d.pagerank.toFixed(4)+'</div>';
-    if(path.length>1){
-      html += '<div class="pathnote">Attack path ('+(path.length-1)+' hops): '+path.join(" \u2192 ")+'</div>';
-    } else if(d.tier0){
+    for (let i = 0; i < path.length - 1; i++) {
+      pathEdges.add(path[i] + "|" + path[i + 1]);
+      pathEdges.add(path[i + 1] + "|" + path[i]);
+    }
+    for (const n of nodes) {
+      const dim = path.length ? !pathSet.has(n.id) : false;
+      cls(n._el, "dim", dim); cls(n._label, "dim", dim);
+    }
+    for (const l of sim.links) {
+      const on = pathEdges.has(l.source.id + "|" + l.target.id);
+      cls(l._el, "path", on);
+      cls(l._el, "dim", path.length ? !on : false);
+    }
+    const hops = d.hops_to_tier0 == null ? "unreachable" : d.hops_to_tier0;
+    let html = '<div class="name">' + d.id + '</div>';
+    html += '<div><span class="k">type:</span> ' + d.type +
+            (d.tier0 ? ' <b style="color:var(--tier0)">[Tier-0]</b>' : '') + '</div>';
+    html += '<div><span class="k">composite risk:</span> ' + d.risk.toFixed(3) + '</div>';
+    html += '<div><span class="k">hops to Tier-0:</span> ' + hops + '</div>';
+    html += '<div><span class="k">degree cent.:</span> ' + d.degree.toFixed(3) + '</div>';
+    html += '<div><span class="k">betweenness:</span> ' + d.betweenness.toFixed(3) + '</div>';
+    html += '<div><span class="k">pagerank:</span> ' + d.pagerank.toFixed(4) + '</div>';
+    if (path.length > 1) {
+      html += '<div class="pathnote">Attack path (' + (path.length - 1) + ' hops): ' +
+              path.join(" → ") + '</div>';
+    } else if (d.tier0) {
       html += '<div class="pathnote">This node is itself a Tier-0 asset.</div>';
     } else {
       html += '<div class="pathnote">No path to any Tier-0 asset.</div>';
     }
     html += '<div class="hint">Click empty space to clear.</div>';
-    document.getElementById("detail").innerHTML = html;
+    $("detail").innerHTML = html;
   }
 
-  svg.on("click", function(e){
-    if(e.target.tagName!=="circle"){
-      node.classed("dim",false);label.classed("dim",false);
-      link.classed("path",false).classed("dim",false);
-      document.getElementById("detail").innerHTML='<div class="hint">No node selected.</div>';
-    }
-  });
+  svg.addEventListener("click", e => { if (e.target.tagName !== "circle") clearSelection(); });
 })();
 </script>
 </body>

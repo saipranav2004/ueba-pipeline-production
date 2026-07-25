@@ -98,7 +98,7 @@ ueba walk-forward-eval --data-dir enterprise_simulator/output --contamination no
 | `comiset-eval` | real-data eval on a COMISET archive: per-view benign novelty + per-auth ROC |
 | `model-benchmark` | compare classical models under four leakage-resistant protocols |
 | `lanl-eval` | per-authentication ROC (TPR@FPR, AUC) on LANL 2015 |
-| `graph-viz` | render the structural identity graph to standalone HTML |
+| `graph-viz` | render the structural identity graph to one self-contained HTML file (no network) |
 
 ## Documentation
 
@@ -127,6 +127,7 @@ ueba_pipeline/
   graph/auth_graph_anomaly.py   Dirichlet-smoothed bidirectional edge surprise
   graph/sessions.py             4624 logons -> causal host->account resolution
   graph/identity_graph.py       structural graph (Tier-0, blast radius) — analyst tooling
+  graph/assets/minigraph.js     vendored force layout, inlined so the view needs no network
   identity/typing.py            type an identity automated (NHI) vs human by activity timing
   identity/deviation.py         NHI schedule + insider rate queues (own budgets)
   models/counts.py              Gamma-Poisson count anomaly (Negative-Binomial tail)
@@ -141,7 +142,7 @@ ueba_pipeline/
   monitoring/drift.py           capability-drift detection
   ingestion/, config/, cli/
 enterprise_simulator/           253-employee AD estate + labelled attack injection
-tests/unit/                     166 tests
+tests/unit/                     168 tests
 .github/workflows/ci.yml        lint, tests (3.12/3.13), quickstart, wheel, image
 ```
 
