@@ -55,10 +55,16 @@ evidence, so each was given its own budget instead of being dropped:
 
 | queue | threat class | relational engine | this queue |
 |---|---|---|---|
-| execution | NTDS extraction / novel program use | 0/2 | **2/2** @ 0.90 FP/day |
-| pipe | PsExec-class remote execution over SMB | 1/6 | **see below** |
+| execution | NTDS extraction / novel program use | 0/6 | **1/6** @ 0.90 FP/day |
+| pipe | PsExec-class remote execution over SMB | 1/6 | **3/6** @ 0.82 FP/day |
 | NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
 | insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
+
+> **The execution row was 2/2 and is now 1/6.** That was not a regression: 2/2
+> was measured over *two* held-out NTDS instances, which cannot distinguish a
+> good detector from a lucky one. Re-run against six instances on the current
+> generator it is 1/6. The larger denominator is the honest number, and NTDS
+> extraction is now a known weakness rather than a solved case.
 
 The **pipe** queue asks what a name-list detection cannot: *has this account ever
 used this pipe?* Published named-pipe detections enumerate `psexesvc`,

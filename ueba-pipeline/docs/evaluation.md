@@ -581,6 +581,8 @@ So it ships as its **own queue with its own budget**, using the same machinery
 | queue | recall | FP identities/day |
 |---|---|---|
 | relational (unchanged) | 54/60 = 90.0% | 3.19 |
+
+*(pre-profile generator; the current relational figure is 55/60 @ 3.17)*
 | **execution** | **NTDS 2/2** | **0.90** |
 
 Recall is flat at 2/2 from a budget of 0.75 all the way to 5/day -- only false
