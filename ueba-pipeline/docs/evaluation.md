@@ -874,13 +874,36 @@ reverse direction cannot simply be dropped: `proc_access` has exactly one
 destination, so its forward conditional is trivially 1.0 and the reverse carries
 the entire signal.
 
-The identified next step is a second index, keyed per destination rather than per
-count: for the handful of destinations with large in-neighbourhoods, precompute
-the sorted `a*_b'` values and their prefix sums at freeze time, turning those
-calls into a binary search as well. The memory is bounded by (marginal size ×
-number of such destinations), which is small precisely because their
-neighbourhoods are large -- about 89k entries for `proc_exec` at 2,036 employees.
-This is specified but not implemented.
+**That second index now exists**, and it removes the residual term. For any
+principal whose neighbourhood exceeds `_STAR_INDEX_MIN_NEIGHBOURS`, `freeze()`
+sorts the `a*_b'` values themselves and keeps prefix sums over them. Eq. (2) then
+needs no decomposition at all: the included mass is one prefix lookup at the
+realised outcome's `a*`, because every outcome's `a*` is already in the array.
+Memory is bounded by (marginal size × number of such principals), which is small
+precisely *because* their neighbourhoods are large -- a view has a big
+in-neighbourhood only when its destination alphabet is tiny.
+
+Verified against the scan it replaces over every edge of a fitted model: **zero
+disagreements about `p == 1.0`** and a worst relative difference of 3.4e-15.
+
+Measured at 8× headcount (3,608 modelled identities, 1.4M events), relational
+scoring throughput:
+
+| | before the star index | after |
+|---|---|---|
+| relational | 17,326 ev/s | **78,855 ev/s** |
+| both scoring passes | 8,446 ev/s | **22,319 ev/s** |
+
+**4.55× at the largest estate measured.** For scale, 78,855 ev/s at 3,608
+identities is within ~20% of what 465 identities managed before the fix, so the
+curve that previously halved on every doubling is close to flat. A full
+re-measurement across 1×/2×/4×/8× has not been re-run on the current generator,
+so "close to flat" is an inference from two points at the same scale, not a
+measured curve.
+
+Fit throughput fell to 7,937 ev/s, from 18,311: `fit` now builds three graphs
+(relational, execution, pipe) where it built two. That is the cost of the fifth
+queue, paid once per training run rather than per scored event.
 
 ### What this means operationally
 

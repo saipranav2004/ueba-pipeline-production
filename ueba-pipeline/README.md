@@ -198,12 +198,12 @@ comparison harness, and real-telemetry ingestion validation.
   inter-arrival (`cadence`) instrument was built for exactly this cohort,
   measured, and left unshipped — the attack it would need to see does not disturb
   cadence. Evidence in [docs/identities.md](docs/identities.md) §16.
-- **Scoring is quadratic in estate size.** Measured 1.7s at 265 employees and
-  72.9s at 2,036 — each doubling costs ~3.5–4× the time. Memory and edge count
-  are linear as designed; the cost is the predictive p-value's sum over
-  principals. Partly fixed (1.3–1.5×, verified exact to 2 ULP), with the residual
-  cause and the remaining fix specified in
-  [docs/evaluation.md](docs/evaluation.md#scalability).
+- **Scoring cost is now near-flat in estate size**, after two prefix-sum indexes
+  over the predictive p-value's sum: **4.55× faster** at 3,608 identities
+  (17,326 → 78,855 events/s), verified to give identical p-values (worst relative
+  difference 3.4e-15, zero disagreements on `p == 1.0`). "Near-flat" is inferred
+  from two points at the same scale — the full 1×/2×/4×/8× curve has not been
+  re-run. See [docs/evaluation.md](docs/evaluation.md#scalability).
 - **Recall falls under a fixed alert budget as the estate grows** — 10/10 at 265
   employees, 4/10 at 2,036 on five alerts/day. Scaling the budget with the estate
   restores it. This is a capacity trade-off the engine surfaces, not hides.
