@@ -9,9 +9,11 @@ and directory-object change -- per event, as
 Dirichlet-smoothed edge surprise across several independently calibrated
 relationship views.
 
-Measured on the honest all-technique benchmark: 54/60 = 90.0% recall at 3.19
+Measured on the honest all-technique benchmark: 55/60 = 91.7% recall at 3.17
 false-positive entities/day (6 seeds, contamination=none). Reproduce with
-`walk-forward-eval`; see docs/evaluation.md.
+`walk-forward-eval`; see docs/evaluation.md. (Was 54/60 @ 3.19 before the
+simulator gained per-identity software profiles -- the detector did not change,
+the estate did, so the figure was re-measured rather than carried over.)
 
 WHY ONE DETECTOR
 ----------------

@@ -34,7 +34,15 @@ techniques. Alert budget 5 entities/day, strict attribution.
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **54/60 = 90.0%** | **3.19** |
+| **engine** | **55/60 = 91.7%** | **3.17** |
+
+**Re-baselined, and why.** Every figure above 54/60 @ 3.19 in this document was
+measured on the generator as it stood before per-identity software profiles were
+added to the simulator. The detector was not changed by that work — only the
+estate was — so the headline was re-measured rather than carried across. Tables
+recording earlier A/B comparisons are left at the numbers they were measured at,
+because rewriting them would falsify the comparison they document; they are
+labelled *(pre-profile generator)* where that matters.
 
 > **History of this figure.** It was 53/60 at 3.31 until a *simulator-realism*
 > fix: service accounts produced no Kerberos service tickets at all, which made

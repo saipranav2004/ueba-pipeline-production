@@ -36,7 +36,13 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **54/60 = 90.0%** | **3.19** |
+| **engine** | **55/60 = 91.7%** | **3.17** |
+
+> **Re-baselined.** This was 54/60 @ 3.19 until the simulator gained per-identity
+> software profiles (see [docs/evaluation.md](docs/evaluation.md#the-telemetry-audit-and-the-views-it-produced)).
+> The detector did not change; the estate did, so the figure was re-measured
+> rather than carried over. Older tables in the docs are labelled with the
+> generator they were measured on.
 
 Per-technique: Pass-the-Hash `9/9`, DCSync `8/8`, Kerberoasting `7/8`, silver
 ticket `7/8`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket `4/4`,
@@ -55,8 +61,8 @@ evidence, so each was given its own budget instead of being dropped:
 
 A fourth threat class — **insider scope abuse**, an authorised account reading a
 share it has never touched — is covered inside the relational queue by the `share`
-view: `0/6 → 6/6` with the headline unchanged at 54/60 @ 3.19. It is the only view
-ever added to that queue at no cost to it.
+view: `0/6 → 6/6` with the headline unchanged to the last digit when it was added.
+It is the only view ever added to that queue at no cost to it.
 
 See [docs/identities.md](docs/identities.md).
 
