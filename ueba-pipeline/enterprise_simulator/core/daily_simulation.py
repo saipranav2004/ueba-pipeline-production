@@ -449,9 +449,30 @@ def _build_cmdline(exe: str, rng: random.Random) -> str:
 
 
 def _select_processes(emp: Employee, rng: random.Random) -> list[str]:
+    """The programs this employee runs today.
+
+    A person runs the same applications every day. Resampling the department's
+    program list per session -- which this did -- meant an account kept meeting
+    "new" programs for its entire history, holding the proc_exec view's benign
+    novelty at 11.1% over 25,889 edges. That saturates the view's null: measured
+    on it, an NTDS extraction scored 12.26 nats and a calibrated p of 0.0011 --
+    a correct and very strong detection -- and still lost its alert slot to seven
+    benign accounts that had each met a new program that day.
+
+    So the daily set is now stable: a core drawn once from a hash of the account
+    name, plus an occasional extra for the genuinely intermittent tools. Same
+    correction as the named-pipe and registry emission, for the same reason and
+    on the same evidence.
+    """
+    import hashlib
     dept_procs = DEPARTMENTS[emp.department].typical_processes
-    n = rng.randint(3, min(len(dept_procs), 9))
-    return rng.sample(dept_procs, n)
+    seed = int(hashlib.sha256(("proc:" + emp.samaccountname).encode()).hexdigest()[:8], 16)
+    picker = random.Random(seed)
+    core = picker.sample(dept_procs, min(len(dept_procs), picker.randint(3, 6)))
+    extras = [p for p in dept_procs if p not in core]
+    if extras and rng.random() < 0.2:
+        return [*core, rng.choice(extras)]
+    return list(core)
 
 
 def _fake_ext_ip(domain: str) -> str:

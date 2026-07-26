@@ -36,7 +36,7 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 
 | | recall | FP entities/day |
 |---|---|---|
-| **engine** | **55/60 = 91.7%** | **3.17** |
+| **engine** | **54/60 = 90.0%** | **3.21** |
 
 > **Re-baselined.** This was 54/60 @ 3.19 until the simulator gained per-identity
 > software profiles (see [docs/evaluation.md](docs/evaluation.md#the-telemetry-audit-and-the-views-it-produced)).
@@ -53,18 +53,21 @@ Four **separately budgeted** queues cover the threat classes the relational
 queue is blind to. Each was measured *inside* that queue first and displaced its
 evidence, so each was given its own budget instead of being dropped:
 
-| queue | threat class | relational engine | this queue |
-|---|---|---|---|
-| execution | NTDS extraction / novel program use | 0/6 | **1/6** @ 0.90 FP/day |
-| pipe | PsExec-class remote execution over SMB | 1/6 | **3/6** @ 0.82 FP/day |
-| NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
-| insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
+| queue | threat class | n | this queue | FP/day |
+|---|---|---|---|---|
+| execution | NTDS extraction / novel program use | 48 | **29.2%** | 0.63 |
+| pipe | PsExec-class remote execution over SMB | 48 | **52.1%** | 0.38 |
+| NHI schedule | compromised service account | 18 | **81.8%** | 0.31 |
+| insider rate | insider / credential abuse | 9 | **88.9%** | 0.17 |
 
-> **The execution row was 2/2 and is now 1/6.** That was not a regression: 2/2
-> was measured over *two* held-out NTDS instances, which cannot distinguish a
-> good detector from a lucky one. Re-run against six instances on the current
-> generator it is 1/6. The larger denominator is the honest number, and NTDS
-> extraction is now a known weakness rather than a solved case.
+> **The execution row read 2/2 = 100% and is really 29.2%.** Not a regression —
+> an artefact of the denominator. Two held-out instances cannot tell a good
+> detector from a lucky one, and `--attack-placement spread` puts most injections
+> in the training window, so a corpus of 10 yielded ~1 scoreable attack. Measured
+> with `tail` placement, where every injection lands in the held-out window,
+> the execution queue detects **14 of 48** NTDS extractions and the pipe queue
+> **25 of 48** PsExec executions. Those are the honest numbers; NTDS extraction
+> is a known weakness of this engine, not a solved case.
 
 The **pipe** queue asks what a name-list detection cannot: *has this account ever
 used this pipe?* Published named-pipe detections enumerate `psexesvc`,

@@ -746,6 +746,50 @@ credentials), the strongest published credential-abuse signal, is never emitted 
 the simulator, and **4776** (NTLM) appears 37 times in 20 days across 253
 employees. Both are simulator gaps.
 
+## Small denominators, and a claim that did not survive one
+
+The execution queue's NTDS figure was published as **0/2 → 2/2**. Re-measured
+with enough instances to mean anything, it is **14/48 = 29.2%**.
+
+Nothing regressed. Two things conspired:
+
+1. **`--attack-placement spread`** distributes injections across the whole
+   timeline, so with a 60/40 causal split roughly 60% of them land in the
+   *training* window and are never scored. A corpus of 10 yielded about one
+   scoreable instance. `tail` reserves the last 40% of eligible days, so every
+   injection is held out and the denominator is the count that was asked for.
+2. **n = 2 cannot distinguish a detector from a coin.** 2/2 and 0/2 are one
+   coin-flip apart, and the figure was quoted as though it were a rate.
+
+Measured properly — `tail` placement, 6 seeds, 48 held-out instances per corpus,
+through `score_queues()`:
+
+| corpus | queue | recall | FP entities/day |
+|---|---|---|---|
+| `ntds_dump` | execution | **14/48 = 29.2%** | 0.63 |
+| `psexec_lateral_movement` | pipe | **25/48 = 52.1%** | 0.38 |
+
+Every other queue scores 0/48 on both corpora, which is the separation the
+architecture is for.
+
+**Why NTDS is hard here, diagnosed rather than assumed.** For a missed instance
+the detection is not weak — it is *correct and outranked*. Traced end to end, an
+attacker's `ntdsutil.exe` scored **12.26 nats** of surprise and a calibrated
+**p = 0.0011**, with the peak hour inside the attack window, and still did not
+alert: seven benign accounts ranked ahead of it under a 1.0/day budget, each
+having met a new program that day. The constraint is the alert budget against
+`proc_exec`'s benign novelty, not the statistic.
+
+That is also why `_select_processes` was made stable per employee: it resampled
+each employee's program set daily, so accounts kept meeting "new" programs
+forever and held proc_exec's benign novelty at 11.1% (now 8.7%). The same defect
+and the same correction as the named-pipe and registry emission.
+
+**The lesson generalises.** Any recall in this document with a single-digit
+denominator is a coin flip reported as a rate. The corpus figures above are
+re-measured at n = 48; the NHI (n = 18) and insider (n = 9) rows are not, and
+should be read with that in mind.
+
 ## Scalability
 
 Measured with `scripts/benchmark_performance.py`, on estates generated at 1×, 2×,

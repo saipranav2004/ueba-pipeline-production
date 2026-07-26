@@ -130,6 +130,11 @@ def _pipe_name(value) -> str:
 # churn that would otherwise make every write novel.
 _REGISTRY_CLASS_DEPTH = 3
 
+# Neighbourhood size above which a principal gets a direct a*-value index rather
+# than the count index plus a per-neighbour correction loop. Below it the
+# correction loop is cheaper than the memory the direct index costs.
+_STAR_INDEX_MIN_NEIGHBOURS = 32
+
 
 def _registry_class(value) -> str:
     """Hive plus the first few path components of a registry target."""
@@ -242,6 +247,9 @@ class AuthGraphAnomalyDetector:
     # neighbours a principal actually has can be enumerated without scanning the
     # estate. Also derived; also rebuilt rather than stored.
     _adj: dict[tuple[str, str], dict[str, dict[str, float]]] = field(default_factory=dict)
+    # Sorted a*_b' values plus prefix sums, for the few principals whose
+    # neighbourhood is the whole estate. See _build_star_index.
+    _star_index: dict[tuple[str, str, str], tuple] = field(default_factory=dict)
 
     # -- eq. (2) acceleration -----------------------------------------------
     def freeze(self) -> AuthGraphAnomalyDetector:
@@ -268,6 +276,7 @@ class AuthGraphAnomalyDetector:
         """
         self._pvalue_index.clear()
         self._adj.clear()
+        self._star_index.clear()
         for view, edges in self._edges.items():
             fwd: dict[str, dict[str, float]] = {}
             rev: dict[str, dict[str, float]] = {}
@@ -278,9 +287,49 @@ class AuthGraphAnomalyDetector:
             self._adj[(view, "src")] = rev    # reverse: key is the destination
         for view, marg in self._dst_counts.items():
             self._pvalue_index[(view, "dst")] = _build_index(marg)
+            self._build_star_index(view, "dst", marg)
         for view, marg in self._src_counts.items():
             self._pvalue_index[(view, "src")] = _build_index(marg)
+            self._build_star_index(view, "src", marg)
         return self
+
+    def _build_star_index(self, view: str, direction: str, marg) -> None:
+        """Direct prefix sums over a*_b' for principals with huge neighbourhoods.
+
+        The count index above assumes a principal's neighbourhood is small, so the
+        handful of outcomes it has actually taken can be corrected one at a time.
+        In the REVERSE direction of a view with a tiny destination alphabet that
+        assumption fails completely: `proc_access` has one destination reached by
+        2,026 principals, `kerb_ctx` two reached by ~1,016 each, so "the
+        neighbourhood" IS the estate and the correction loop is O(identities)
+        again. That is the residual quadratic term in a scoring run.
+
+        For those keys the sum needs no decomposition at all. Every outcome's
+        a*_b' is known at freeze time, so sorting them once and keeping prefix
+        sums turns eq. (2) into a single binary search: the included mass is the
+        prefix up to a*_obs, and the observed outcome is simply one of the entries.
+
+        Cost is |marginal| per indexed key, which is bounded precisely because
+        these keys are few -- a view has a large in-neighbourhood only when its
+        destination alphabet is small. Measured at 2,036 employees this is ~2k
+        entries for proc_access and ~89k for proc_exec.
+        """
+        adj = self._adj.get((view, direction), {})
+        a = self.config.alpha
+        denom_pi = self._view_totals[view] + max(len(marg), 1)
+        for key_a, neighbours in adj.items():
+            if len(neighbours) < _STAR_INDEX_MIN_NEIGHBOURS:
+                continue
+            stars = sorted(
+                a * (count + 1.0) / denom_pi + neighbours.get(b_prime, 0.0)
+                for b_prime, count in marg.items()
+            )
+            prefix = [0.0]
+            running = 0.0
+            for st in stars:
+                running += st
+                prefix.append(running)
+            self._star_index[(view, direction, key_a)] = (stars, prefix)
 
     # -- edge extraction ----------------------------------------------------
     def edges_for(self, event) -> list[tuple[str, tuple[str, str]]]:
@@ -632,9 +681,25 @@ class AuthGraphAnomalyDetector:
         n_outcomes = len(counts_sorted)
         denom_pi = self._view_totals[view] + max(n_outcomes, 1)
         n_a = totals_a.get(view, {}).get(key_a, 0.0)
-        neighbours = self._adj.get((view, "dst" if forward else "src"), {}).get(key_a, {})
+        direction = "dst" if forward else "src"
+        neighbours = self._adj.get((view, direction), {}).get(key_a, {})
 
         c_ab = neighbours.get(key_b, 0.0)
+
+        # A principal whose neighbourhood is the whole estate has a direct index
+        # over a* itself, and then eq. (2) is one binary search with nothing to
+        # correct: every outcome's a* is already in the sorted array.
+        star_idx = self._star_index.get((view, direction, key_a))
+        if star_idx is not None:
+            stars, star_prefix = star_idx
+            star_obs_direct = c_ab + a * (marg.get(key_b, 0.0) + 1.0) / denom_pi
+            k = bisect.bisect_right(stars, star_obs_direct)
+            if k >= len(stars):
+                # Nothing is more probable than the realised outcome, so no
+                # evidence -- exactly 1.0, for the reason given in the scan path.
+                return 1.0
+            return float(min(max(star_prefix[k] / (n_a + a), 1e-12), 1.0))
+
         pi_b = (marg.get(key_b, 0.0) + 1.0) / denom_pi
         star_obs = c_ab + a * pi_b
 
@@ -687,6 +752,7 @@ class AuthGraphAnomalyDetector:
         if self._pvalue_index:
             self._pvalue_index.clear()
             self._adj.clear()
+            self._star_index.clear()
         self._principals[view].add(edge[0])
         self._edges[view][edge] = self._edges[view].get(edge, 0.0) + 1.0
         for store, k in ((self._dst_counts, edge[1]), (self._src_counts, edge[0]),
