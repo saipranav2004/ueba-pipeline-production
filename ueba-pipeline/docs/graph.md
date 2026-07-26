@@ -207,11 +207,13 @@ they were rejected on *this estate*, not on the idea.
   so the view is a near-constant that can never fire — while carrying the highest
   event volume of any candidate (39.7 events per account), inflating every Šidák
   correction and every Tippett minimum it appears in.
-- **`pipe`** (account → named pipe, Sysmon 17/18) leaves the headline alone (54/60)
-  but, measured against the *shipped* queue, costs **five of six** share-exfil
-  detections on its own — `reg` costs four. Neither needs the other to displace;
-  each is a broad, low-novelty view competing for the same Tippett minimum.
-  Accounts touch 3.79 of the 7 pipe names that exist here.
+- **`pipe`** (account → named pipe, Sysmon 17/18). Once the simulator gained
+  per-identity software profiles — dropping its benign novelty from 11.0% to
+  4.9% — this went from detecting nothing to **5/6 standalone** on a PsExec
+  corpus. The view was never the problem; the estate was. It still cannot join
+  the relational queue (six headline detections lost to recover two) and cannot
+  share the execution queue with `proc_exec` (which displaces it 3/6 → 0/6), so
+  it is specified for a queue of its own and stays disabled until that exists.
 
 **Both destination counts are simulator artifacts, and that is the finding.** A real
 Windows estate produces hundreds of registry locations and pipe names; a Cobalt

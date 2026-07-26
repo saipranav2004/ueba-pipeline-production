@@ -683,6 +683,49 @@ own, and `reg` costs four. The displacement is not a property of stacking three
 views; each broad, low-novelty view displaces narrow evidence by itself, which is
 the sixth and sharpest measurement of the law this engine keeps running into.
 
+### `pipe` after the generator was fixed: the view was never the problem
+
+The rejection above was measured on a generator where an account touched 3.79 of
+7 pipe names and pipe traffic carried 11.0% benign novelty across 23,953 edges --
+2,623 first contacts, about one per account-day, so nothing could rank. Giving
+each employee a stable per-identity software profile (and emitting their core
+pipe set every session rather than resampling it) took benign novelty to **4.9%**,
+the band the shipped views occupy.
+
+Re-measured on that generator, against `psexec_lateral_movement` -- remote
+execution over SMB, half the injections using tool-shaped pipe names and half the
+OPSEC rename real tooling uses to defeat name-list detection:
+
+| arm | PsExec corpus | headline | headline FP/day |
+|---|---|---|---|
+| baseline | 1/6 | 55/60 | 3.17 |
+| +`pipe` in the relational queue | 3/6 | **49/60** | 3.31 |
+| **`pipe` standalone** | **5/6** | 0/60 | — |
+
+**0/6 to 5/6.** The view was correct throughout; the estate it was measured on
+could not exercise it. That is the case for keeping an implemented-but-disabled
+view rather than deleting it on a measurement its input could not have passed.
+
+It still cannot live in the relational queue: it costs six headline detections
+(Kerberoasting −4, golden −1, silver −1) to recover two of its own. Nor can it
+share the execution queue with `proc_exec`, which displaces it outright:
+
+| execution-queue arm | PsExec corpus | FP/day |
+|---|---|---|
+| `proc_exec` (shipped) | 0/6 | 0.92 |
+| `proc_exec` + `pipe` | 0/6 | 0.92 |
+| `pipe` alone | **3/6** | 0.82 |
+
+Seventh independent measurement of the displacement law, and the same resolution
+the previous six reached: **`pipe` needs its own queue and its own budget.** That
+is specified and **not yet implemented** — the engine currently ships four queues,
+and `pipe` remains disabled until the fifth exists.
+
+*(The `ntds_dump` arm of that run returned 0/0 — no injected instance landed in
+the held-out window — so it measured nothing and is not reported as evidence.
+Whether `pipe` would harm `proc_exec`'s NTDS coverage is untested; it is moot
+while they are not sharing a queue, and must be re-tested if that ever changes.)*
+
 **The destination counts are simulator artifacts, and that is the finding.** A
 real estate has hundreds of registry locations and pipe names, and a Cobalt Strike
 pipe is novel by construction. `reg` and `pipe` therefore stay implemented and

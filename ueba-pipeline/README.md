@@ -176,6 +176,11 @@ comparison harness, and real-telemetry ingestion validation.
 - **No real-world detection-performance validation.** Every recall and
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
+- **Named-pipe lateral movement is detected but not shipped.** The `pipe` view
+  reaches 5/6 standalone on a PsExec corpus, including the OPSEC-renamed variants
+  that defeat name-list detection, but displaces evidence in every existing queue
+  and needs a fifth queue of its own. Specified in
+  [docs/evaluation.md](docs/evaluation.md), not implemented.
 - **Round-the-clock non-human identities** (a poller active every hour) are
   covered by no queue: they have no schedule to deviate from. A burst-based
   inter-arrival (`cadence`) instrument was built for exactly this cohort,
