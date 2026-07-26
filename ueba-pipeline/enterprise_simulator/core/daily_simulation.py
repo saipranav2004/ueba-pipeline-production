@@ -676,13 +676,23 @@ def simulate_employee_day(
                        ))
 
     # ── Named pipes (background OS traffic) ───────────────────────────────────
-    # Several per session, drawn from THIS employee's stable software profile, so
-    # the account accumulates a consistent pipe baseline rather than a random
-    # sample of every pipe in the estate.
+    # The machine's logon sequence touches the SAME pipes every day -- the same
+    # services start, the same agents connect -- so an account's pipe set is
+    # established within its first sessions and is then stable. Drawing a random
+    # subset per session instead would trickle first-contact edges across the
+    # whole training window, and a view whose benign edges are perpetually novel
+    # carries no information (the lesson `user_src` already learned: keyed on IP
+    # its benign novelty was ~92% and it was pure noise).
+    #
+    # So: the core set every session, plus an occasional extra for the genuinely
+    # intermittent things (a printer, a VPN client, an update agent).
     emp_pipes, emp_writes = software_profile(emp)
-    for _ in range(rng.randint(2, 5)):
+    todays_pipes = list(emp_pipes[:5])
+    if rng.random() < 0.15 and len(emp_pipes) > 5:
+        todays_pipes.append(rng.choice(emp_pipes[5:]))
+    for pipe_leaf in todays_pipes:
         pipe_ts   = logon_utc + timedelta(seconds=rng.randint(5, 900))
-        pipe_name = rf"\\.\pipe\{rng.choice(emp_pipes)}"
+        pipe_name = rf"\\.\pipe\{pipe_leaf}"
         result.add("sysmon", pipe_ts,
                    gen_eid17(exp_proc, pipe_name, pipe_ts, bus))
         result.add("sysmon", pipe_ts + timedelta(milliseconds=rng.randint(5, 50)),
@@ -690,7 +700,7 @@ def simulate_employee_day(
                              pipe_ts + timedelta(milliseconds=rng.randint(5, 50)), bus))
 
     # ── Process launch loop ───────────────────────────────────────────────────
-    for exe in _select_processes(emp, rng):
+    for proc_idx, exe in enumerate(_select_processes(emp, rng)):
         offset  = rng.uniform(120, max(121.0, span_secs - 60))
         proc_ts = logon_utc + timedelta(seconds=offset)
         if proc_ts >= logoff_utc:
@@ -739,7 +749,12 @@ def simulate_employee_day(
         # Registry reads/writes (normal application activity)
         if rng.random() < 0.35:
             reg_ts  = proc_ts + timedelta(seconds=rng.randint(1, 20))
-            reg_key, reg_val, reg_data = rng.choice(emp_writes)
+            # Cycle deterministically through this machine's own settings keys
+            # rather than sampling: an application rewrites the same values on
+            # each launch, so the account's registry footprint is established
+            # early and stable. Sampling produced a 14.5% benign novelty rate --
+            # a view whose ordinary traffic is perpetually novel cannot rank.
+            reg_key, reg_val, reg_data = emp_writes[proc_idx % len(emp_writes)]
             result.add("sysmon", reg_ts,
                        gen_eid12(proc, f"{reg_key}\\{reg_val}",
                                  "CreateKey", reg_ts, bus))
