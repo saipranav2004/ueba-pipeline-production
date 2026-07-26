@@ -44,9 +44,9 @@ techniques, 60/40 out-of-time split, strict attribution, alert budget 5/day:
 > rather than carried over. Older tables in the docs are labelled with the
 > generator they were measured on.
 
-Per-technique: Pass-the-Hash `9/9`, DCSync `8/8`, Kerberoasting `7/8`, silver
-ticket `7/8`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket `4/4`,
-LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
+Per-technique: DCSync `8/8`, Kerberoasting `8/8`, silver ticket `8/8`,
+Pass-the-Hash `8/9`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket
+`4/4`, LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
 (NTDS is covered by the execution queue below, not by the relational path).
 
 Three **separately budgeted** queues cover the threat classes the relational
