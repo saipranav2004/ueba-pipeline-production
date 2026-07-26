@@ -186,25 +186,106 @@ _DEPT_FILES: dict[str, list[str]] = {
                     "Revenue_Forecast.xlsx", "Org_Chart.pptx"],
 }
 
-# Normal registry keys written by applications
-_NORMAL_REGISTRY_WRITES: list[tuple[str, str, str]] = [
-    (r"HKCU\SOFTWARE\Microsoft\Office\16.0\Common\General", "SharedDocPath", r"C:\Users\Default\Documents"),
-    (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "HideFileExt", "0"),
-    (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "AutoRestartShell", "1"),
-    (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "Teams", r"C:\Users\Default\AppData\Local\Microsoft\Teams\Update.exe"),
-    (r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA", "1"),
-]
+# ── Registry and named-pipe behaviour ────────────────────────────────────────
+#
+# Both of these used to be a uniform `rng.choice` over one short global list, so
+# every identity eventually touched every value: measured on a 20-day estate, an
+# account reached 3.98 of the 4 registry locations and 3.79 of the 7 pipe names
+# that existed. A behavioural model cannot learn anything from that -- there is no
+# per-identity baseline to deviate FROM -- and the two views built on this
+# telemetry were unusable as a direct result.
+#
+# Real estates have the opposite shape: diversity is high ACROSS identities and
+# low WITHIN one. A given person's machine runs a particular set of applications,
+# and those applications touch a particular, stable set of pipes and registry
+# locations, day after day. So the vocabulary below is realistic in size, and
+# `software_profile()` gives each employee a stable subset of it.
 
-# Normal Windows named pipes (background OS traffic)
-_SYSTEM_PIPES: list[str] = [
-    r"\\.\pipe\svcctl",
-    r"\\.\pipe\lsarpc",
-    r"\\.\pipe\samr",
-    r"\\.\pipe\netlogon",
-    r"\\.\pipe\wkssvc",
-    r"\\.\pipe\eventlog",
-    r"\\.\pipe\srvsvc",
+# Windows built-in pipes, present on essentially every host. Names verified
+# against the documented RPC/SMB endpoint list (svcctl, lsarpc, samr, netlogon,
+# wkssvc, srvsvc, epmapper, eventlog, atsvc, spoolss are the classic set).
+_OS_PIPES: list[str] = [
+    "svcctl", "lsarpc", "samr", "netlogon", "wkssvc", "eventlog", "srvsvc",
+    "epmapper", "atsvc", "spoolss", "ntsvcs", "InitShutdown", "scerpc",
+    "LSM_API_service", "trkwks", "plugplay", "winreg", "browser",
 ]
+# Every session touches a few of these; they are the shared floor, not the signal.
+_UNIVERSAL_PIPES: list[str] = ["svcctl", "lsarpc", "wkssvc", "srvsvc", "eventlog"]
+
+# Application pipes, keyed by the software a role actually runs. Deliberately
+# STABLE names: Chromium's `mojo.<pid>.<n>.<random>` and similar per-launch
+# pipes are excluded, because a production Sysmon configuration filters them for
+# exactly the reason they would break this view -- every instance is novel, so
+# they carry no per-identity information, only noise.
+_APP_PIPES: dict[str, list[str]] = {
+    "Engineering": ["docker_engine", "vscode-git", "dotnet-diagnostic", "openssh-agent"],
+    "IT":          ["PSHost.Admin", "sqlquery", "wcf-remoting", "RemoteRegistry"],
+    "Finance":     ["MsFteWds", "OfficeC2R", "SAPgui"],
+    "HR":          ["MsFteWds", "OfficeC2R", "WorkdaySync"],
+    "Sales":       ["MsFteWds", "OfficeC2R", "CrmSync"],
+    "Marketing":   ["MsFteWds", "OfficeC2R", "AdobeIPC"],
+    "Operations":  ["MsFteWds", "OfficeC2R", "SAPgui"],
+    "Legal":       ["MsFteWds", "OfficeC2R", "DocuSignIPC"],
+    "Executive":   ["MsFteWds", "OfficeC2R", "TeamsIPC"],
+}
+
+# Registry locations, as (key, value, data). Breadth matters more than depth:
+# the `reg` view keys on hive + three path components, so what it needs is many
+# distinct LOCATIONS, not many values in one location.
+_OS_REGISTRY_WRITES: list[tuple[str, str, str]] = [
+    (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "HideFileExt", "0"),
+    (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs", "MRUListEx", "0100000"),
+    (r"HKCU\Control Panel\Desktop", "ScreenSaveTimeOut", "900"),
+    (r"HKCU\SOFTWARE\Microsoft\Internet Explorer\Main", "Start Page", "https://intranet.nexovate.local"),
+    (r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters", "Domain", "nexovate.local"),
+    (r"HKLM\SOFTWARE\Microsoft\Windows Defender\Signature Updates", "SignatureLastUpdated", "1"),
+]
+_APP_REGISTRY_WRITES: dict[str, list[tuple[str, str, str]]] = {
+    "Engineering": [
+        (r"HKCU\SOFTWARE\Microsoft\VisualStudio\Telemetry", "LastPing", "1"),
+        (r"HKCU\SOFTWARE\GitForWindows", "InstallPath", r"C:\Program Files\Git"),
+        (r"HKLM\SOFTWARE\Docker Inc\Docker", "AppPath", r"C:\Program Files\Docker"),
+    ],
+    "IT": [
+        (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "AutoRestartShell", "1"),
+        (r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server", "fDenyTSConnections", "0"),
+        (r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA", "1"),
+    ],
+    "Finance":   [(r"HKCU\SOFTWARE\Microsoft\Office\16.0\Excel\Options", "DefaultPath", r"D:\Shares\Finance")],
+    "HR":        [(r"HKCU\SOFTWARE\Microsoft\Office\16.0\Word\Options", "DefaultPath", r"D:\Shares\HR")],
+    "Sales":     [(r"HKCU\SOFTWARE\Salesforce\Client", "LastSync", "1")],
+    "Marketing": [(r"HKCU\SOFTWARE\Adobe\CommonFiles", "LastLaunch", "1")],
+    "Operations":[(r"HKCU\SOFTWARE\SAP\SAPGUI Front", "LastServer", "sap.nexovate.local")],
+    "Legal":     [(r"HKCU\SOFTWARE\DocuSign\Client", "LastSession", "1")],
+    "Executive": [(r"HKCU\SOFTWARE\Microsoft\Office\16.0\PowerPoint\Options", "DefaultPath", r"D:\Shares\Executive")],
+}
+
+
+def software_profile(emp) -> tuple[list[str], list[tuple[str, str, str]]]:
+    """The pipes and registry locations THIS employee's machine touches.
+
+    Derived from the account name by a stable hash rather than drawn per session,
+    so an identity's baseline is the same every day and a departure from it is
+    genuinely a departure. That property -- not the size of the vocabulary -- is
+    what makes per-identity novelty measurable; the `share` view works precisely
+    because department-keyed access already had it.
+    """
+    import hashlib
+    seed = int(hashlib.sha256(emp.samaccountname.encode()).hexdigest()[:8], 16)
+    picker = random.Random(seed)
+
+    pipes = list(_UNIVERSAL_PIPES)
+    pipes += _APP_PIPES.get(emp.department, [])
+    # One or two OS pipes beyond the universal floor, stable per person: real
+    # machines differ by installed drivers, printers and management agents.
+    pipes += picker.sample([p for p in _OS_PIPES if p not in pipes],
+                           k=min(2, max(0, len(_OS_PIPES) - len(pipes))))
+
+    writes = list(_OS_REGISTRY_WRITES[:3])
+    writes += _APP_REGISTRY_WRITES.get(emp.department, [])
+    writes += picker.sample(_OS_REGISTRY_WRITES[3:],
+                            k=min(2, len(_OS_REGISTRY_WRITES[3:])))
+    return pipes, writes
 
 # Normal WMI queries (administrative monitoring)
 _WMI_QUERIES: list[str] = [
@@ -595,9 +676,13 @@ def simulate_employee_day(
                        ))
 
     # ── Named pipes (background OS traffic) ───────────────────────────────────
-    if rng.random() < 0.4:
-        pipe_ts   = logon_utc + timedelta(seconds=rng.randint(5, 30))
-        pipe_name = rng.choice(_SYSTEM_PIPES)
+    # Several per session, drawn from THIS employee's stable software profile, so
+    # the account accumulates a consistent pipe baseline rather than a random
+    # sample of every pipe in the estate.
+    emp_pipes, emp_writes = software_profile(emp)
+    for _ in range(rng.randint(2, 5)):
+        pipe_ts   = logon_utc + timedelta(seconds=rng.randint(5, 900))
+        pipe_name = rf"\\.\pipe\{rng.choice(emp_pipes)}"
         result.add("sysmon", pipe_ts,
                    gen_eid17(exp_proc, pipe_name, pipe_ts, bus))
         result.add("sysmon", pipe_ts + timedelta(milliseconds=rng.randint(5, 50)),
@@ -654,7 +739,7 @@ def simulate_employee_day(
         # Registry reads/writes (normal application activity)
         if rng.random() < 0.35:
             reg_ts  = proc_ts + timedelta(seconds=rng.randint(1, 20))
-            reg_key, reg_val, reg_data = rng.choice(_NORMAL_REGISTRY_WRITES)
+            reg_key, reg_val, reg_data = rng.choice(emp_writes)
             result.add("sysmon", reg_ts,
                        gen_eid12(proc, f"{reg_key}\\{reg_val}",
                                  "CreateKey", reg_ts, bus))

@@ -27,6 +27,21 @@ The identity structure is defined in `config/company.py` and is configurable —
 department profiles, headcount, servers, admin tiers, and service accounts can be
 overridden without changing generator code.
 
+## Concurrent runs
+
+A run **wipes its output directory before writing**, so two runs sharing one
+directory destroy each other — the second's wipe lands while the first is being
+read, giving truncated JSONL or a missing `attack_labels.jsonl`. Pass `--output`
+to give each run its own:
+
+```bash
+python enterprise_simulator/run_simulation.py --days 20 --seed 1 --output /tmp/estate_a &
+python enterprise_simulator/run_simulation.py --days 20 --seed 2 --output /tmp/estate_b &
+wait
+```
+
+Benchmark sweeps depend on this; without it they must run strictly serially.
+
 ## Output
 
 Events are written as per-channel JSONL under `output/`:

@@ -81,6 +81,14 @@ from core.time_engine import (
 # department overrides.
 
 # ── Output directories ────────────────────────────────────────────────────────
+# Where this run writes. Module-level because the per-source paths below are
+# derived from it; `--output` rebinds both via set_output_dir() before any write.
+#
+# It was a hardcoded constant, which made two concurrent runs silently destroy
+# each other: the first thing a run does is wipe the directory, so a benchmark
+# sweep and any other simulator invocation would interleave a wipe with a read
+# and produce truncated JSONL or a missing attack_labels.jsonl. That cost two
+# measurement runs before it was fixed rather than worked around.
 BASE_OUTPUT = os.path.join(os.path.dirname(__file__), "output")
 
 SOURCE_DIRS: dict[str, str] = {
@@ -94,6 +102,18 @@ SOURCE_DIRS: dict[str, str] = {
     "kafka":          os.path.join(BASE_OUTPUT, "kafka_json"),
     "csv":            os.path.join(BASE_OUTPUT, "csv_exports"),
 }
+
+
+def set_output_dir(path: str) -> None:
+    """Point this run at `path`. Must be called before any generation."""
+    global BASE_OUTPUT
+    BASE_OUTPUT = os.path.abspath(path)
+    for key, leaf in (("security", "security_logs"), ("sysmon", "sysmon_logs"),
+                      ("dns", "dns_logs"), ("powershell", "powershell_logs"),
+                      ("task_scheduler", "task_scheduler_logs"), ("wmi", "wmi_logs"),
+                      ("defender", "defender_logs"), ("kafka", "kafka_json"),
+                      ("csv", "csv_exports")):
+        SOURCE_DIRS[key] = os.path.join(BASE_OUTPUT, leaf)
 
 # ── CSV field schemas — flattened view per source ─────────────────────────────
 CSV_FIELDS: dict[str, list[str]] = {
@@ -795,7 +815,14 @@ if __name__ == "__main__":
                              "the same profiles, which is how identity-scaling "
                              "behaviour is measured (scripts/"
                              "benchmark_performance.py).")
+    parser.add_argument("--output", default=None,
+                        help="Directory to write this run into. Defaults to "
+                             "enterprise_simulator/output. A run WIPES its output "
+                             "directory first, so concurrent runs must each be "
+                             "given their own -- benchmark sweeps rely on this.")
     args = parser.parse_args()
+    if args.output:
+        set_output_dir(args.output)
 
     if args.headcount_scale != 1.0:
         for dept in DEPARTMENTS.values():

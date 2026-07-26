@@ -45,6 +45,7 @@ from generators.security_generator import (
 )
 from generators.security_generator_extended import gen_5140, gen_5145
 from generators.sysmon_generator import gen_eid1, gen_eid10
+from generators.sysmon_generator_extended import gen_eid17, gen_eid18
 
 InjectedEvents = list[tuple[str, datetime, dict[str, Any]]]
 
@@ -750,6 +751,119 @@ def inject_insider_data_staging(
     return events, label
 
 
+def inject_psexec_lateral_movement(
+    roster: list[Employee],
+    bus: EventBus,
+    sim_date: date,
+    rng: random.Random,
+) -> tuple[InjectedEvents, AttackLabel]:
+    """Remote execution over SMB, leaving a service-control named pipe behind.
+
+    PsExec-class tooling (Sysinternals PsExec, Impacket psexec.py/smbexec) copies
+    a service binary to ADMIN$, starts it through the Service Control Manager and
+    talks to it over a named pipe. Published detections are lists of pipe names --
+    `psexesvc`, `remcom_communication`, anything ending `-stdin`/`-stdout` -- and
+    OPSEC-aware variants exist precisely to defeat that: SharpNoPSExec and patched
+    Impacket let the operator rename the pipe to something ordinary like `atsvc`
+    (Task Scheduler) or `winspool` (Print Spooler).
+
+    Half the injections here use a tool-shaped name and half use the evasive
+    rename, on purpose. A name list catches the first half only. A model of which
+    pipes THIS ACCOUNT has ever used catches both, because an account that has
+    never done service-control work has never touched either pipe -- which is the
+    claim this engine makes about signatures, made falsifiable.
+    """
+    from core.daily_simulation import software_profile
+
+    attacker = rng.choice([e for e in roster if e.is_manager] or roster)
+    target = rng.choice([e for e in roster if e.workstation != attacker.workstation])
+
+    # Evasive half: a pipe that exists on every host, so the NAME is unremarkable
+    # and only its use by this account is not. The tool-shaped half is the
+    # baseline case a name list would also catch.
+    evasive = rng.random() < 0.5
+    if evasive:
+        pipe = rng.choice(["atsvc", "winspool", "spoolss"])
+    else:
+        pipe = rng.choice([f"psexesvc-{target.workstation}-{rng.randint(1000, 9999)}",
+                           "RemCom_communication", "paexec"])
+    # Never a pipe the attacker's own account routinely uses, or the injection
+    # would be labelled as an attack while being, correctly, unremarkable.
+    own_pipes, _ = software_profile(attacker)
+    if pipe in own_pipes:
+        pipe = f"{pipe}-svc"
+
+    attack_ts = local_to_utc(_float_hour_to_datetime(sim_date, rng.uniform(9.0, 18.0)))
+    src_ip = attacker.workstation_ip
+    events: InjectedEvents = []
+
+    session = bus.open_session(
+        samaccountname=attacker.samaccountname,
+        domain="NEXOVATE",
+        logon_type=3,
+        auth_package="NTLM",
+        src_ip=src_ip,
+        src_port=bus.new_src_port(),
+        workstation=attacker.workstation,
+        computer=target.workstation + ".nexovate.local",
+        logon_time_utc=attack_ts,
+        is_elevated=True,
+        is_remote=True,
+    )
+    events.append(("security", attack_ts,
+                   gen_4624(session, attack_ts, bus,
+                            target_user_sid=_user_sid(attacker.samaccountname))))
+
+    # The service host process, then the pipe it serves and the client connect.
+    svc_proc = bus.spawn_process(
+        image=rf"C:\Windows\{pipe.split('-')[0]}.exe",
+        command_line=rf"C:\Windows\{pipe.split('-')[0]}.exe -service",
+        user=attacker.samaccountname, logon_id=session.target_logon_id,
+        parent_image=r"C:\Windows\System32\services.exe",
+        parent_guid=bus.new_guid(),
+        computer=target.workstation + ".nexovate.local",
+        start_time_utc=attack_ts + timedelta(seconds=2),
+        integrity_level="System",
+    )
+    events.append(("sysmon", attack_ts + timedelta(seconds=2),
+                   gen_eid1(svc_proc, "NEXOVATE", attack_ts + timedelta(seconds=2), bus)))
+
+    for i, offset in enumerate((3, 4)):
+        ts = attack_ts + timedelta(seconds=offset)
+        gen = gen_eid17 if i == 0 else gen_eid18
+        events.append(("sysmon", ts, gen(svc_proc, rf"\\.\pipe\{pipe}", ts, bus)))
+
+    # Redirection pipes, the artifact the "-stdin/-stdout" detections key on.
+    if not evasive:
+        for suffix, offset in (("stdin", 5), ("stdout", 5), ("stderr", 6)):
+            ts = attack_ts + timedelta(seconds=offset)
+            events.append(("sysmon", ts,
+                           gen_eid17(svc_proc, rf"\\.\pipe\{pipe}-{suffix}", ts, bus)))
+
+    end_ts = attack_ts + timedelta(seconds=8)
+    label = AttackLabel(
+        attack_type="psexec_lateral_movement",
+        mitre_technique="T1021.002",     # SMB/Windows Admin Shares
+        start_time=utc_now_str(attack_ts),
+        end_time=utc_now_str(end_ts),
+        target_users=[attacker.samaccountname],
+        source_ip=src_ip,
+        details={
+            "actor": attacker.samaccountname,
+            "target_host": target.workstation,
+            "pipe": pipe,
+            "evasive_rename": evasive,
+            "signature": (f"{attacker.samaccountname} executed remotely on "
+                          f"{target.workstation} over \\\\.\\pipe\\{pipe}"
+                          + (" -- an ordinary Windows pipe name chosen to defeat a "
+                             "name-list detection; only novelty for this account "
+                             "distinguishes it" if evasive else
+                             " -- a tool-shaped pipe name a name list would also catch")),
+        },
+    )
+    return events, label
+
+
 def inject_insider_share_exfiltration(
     roster: list[Employee],
     bus: EventBus,
@@ -953,6 +1067,7 @@ ATTACK_REGISTRY = {
     "account_manipulation": inject_account_manipulation,
     "insider_data_staging": inject_insider_data_staging,
     "insider_share_exfiltration": inject_insider_share_exfiltration,
+    "psexec_lateral_movement": inject_psexec_lateral_movement,
     "nhi_schedule_hijack": inject_nhi_schedule_hijack,
 }
 
@@ -978,5 +1093,12 @@ ATTACK_REGISTRY = {
 # grows.
 INSIDER_CORPUS_ATTACKS = ("insider_data_staging", "insider_share_exfiltration")
 NHI_CORPUS_ATTACKS = ("nhi_schedule_hijack",)
-NON_HEADLINE_ATTACKS = INSIDER_CORPUS_ATTACKS + NHI_CORPUS_ATTACKS
+# Remote execution over SMB, kept out of the headline for the same reason as the
+# other corpora: it exists to exercise the `pipe` view, which is implemented and
+# NOT shipped. Folding it into the headline would change that figure's
+# denominator -- making it incomparable with every number already published --
+# to measure a capability the engine does not currently claim. If `pipe` ever
+# earns its place, promoting this is a deliberate, documented re-baseline.
+PIPE_CORPUS_ATTACKS = ("psexec_lateral_movement",)
+NON_HEADLINE_ATTACKS = INSIDER_CORPUS_ATTACKS + NHI_CORPUS_ATTACKS + PIPE_CORPUS_ATTACKS
 HEADLINE_ATTACKS = tuple(k for k in ATTACK_REGISTRY if k not in NON_HEADLINE_ATTACKS)
