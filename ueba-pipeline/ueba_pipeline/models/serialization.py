@@ -43,7 +43,8 @@ from pathlib import Path
 
 import numpy as np
 
-SERIALIZATION_VERSION = "5.0.0"
+# 6.0.0: the named-pipe queue joined the bundle (pipe_graph/pipe_nulls).
+SERIALIZATION_VERSION = "6.0.0"
 _SIGNING_KEY_ENV = "UEBA__SECURITY__MODEL_SIGNING_KEY"
 
 _STATE_NAME = "engine.json"
@@ -283,6 +284,14 @@ def engine_to_bundle(engine) -> tuple[dict, dict[str, np.ndarray]]:
             arrays[f"enull_{view}"] = np.asarray(pv._grid, dtype=np.float64)
         execution_nulls[view] = {**st, "has_array": f"enull_{view}" in arrays}
 
+    # Same for the named-pipe queue.
+    pipe_nulls = {}
+    for view, pv in engine._pipe_nulls.items():
+        st = pvalue_to_state(pv)
+        if st.pop("_array") is not None:
+            arrays[f"pnull_{view}"] = np.asarray(pv._grid, dtype=np.float64)
+        pipe_nulls[view] = {**st, "has_array": f"pnull_{view}" in arrays}
+
     cfg = engine.config
     state = {
         "serialization_version": SERIALIZATION_VERSION,
@@ -295,12 +304,15 @@ def engine_to_bundle(engine) -> tuple[dict, dict[str, np.ndarray]]:
             "nhi_budget_per_day": cfg.nhi_budget_per_day,
             "insider_budget_per_day": cfg.insider_budget_per_day,
             "execution_budget_per_day": cfg.execution_budget_per_day,
+            "pipe_budget_per_day": cfg.pipe_budget_per_day,
             "pvalue_mode": cfg.pvalue_mode,
         },
         "graph": graph_to_state(engine.graph),
         "graph_nulls": graph_nulls,
         "execution_graph": graph_to_state(engine.execution_graph),
         "execution_nulls": execution_nulls,
+        "pipe_graph": graph_to_state(engine.pipe_graph),
+        "pipe_nulls": pipe_nulls,
         "manifest": manifest_to_state(engine.manifest),
         "view_stats": engine.view_stats,
         "tracks": tracks,
@@ -335,6 +347,14 @@ def engine_from_bundle(state: dict, arrays: dict[str, np.ndarray]):
             view: pvalue_from_state({**st, "_array": arrays.get(f"enull_{view}")
                                      if st.get("has_array") else None})
             for view, st in state.get("execution_nulls", {}).items()
+        }
+
+    if "pipe_graph" in state:
+        engine.pipe_graph = graph_from_state(state["pipe_graph"])
+        engine._pipe_nulls = {
+            view: pvalue_from_state({**st, "_array": arrays.get(f"pnull_{view}")
+                                     if st.get("has_array") else None})
+            for view, st in state.get("pipe_nulls", {}).items()
         }
 
     for name, st in state.get("tracks", {}).items():

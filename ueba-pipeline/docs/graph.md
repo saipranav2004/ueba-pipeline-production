@@ -213,7 +213,9 @@ they were rejected on *this estate*, not on the idea.
   corpus. The view was never the problem; the estate was. It still cannot join
   the relational queue (six headline detections lost to recover two) and cannot
   share the execution queue with `proc_exec` (which displaces it 3/6 → 0/6), so
-  it is specified for a queue of its own and stays disabled until that exists.
+  it has a queue of its own — `PIPE_VIEWS`, its own budget and its own calibrated
+  null. It is the fifth queue, and the seventh time this engine has resolved a
+  displacement the same way.
 
 **Both destination counts are simulator artifacts, and that is the finding.** A real
 Windows estate produces hundreds of registry locations and pipe names; a Cobalt

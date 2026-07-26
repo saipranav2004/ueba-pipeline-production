@@ -717,9 +717,15 @@ share the execution queue with `proc_exec`, which displaces it outright:
 | `pipe` alone | **3/6** | 0.82 |
 
 Seventh independent measurement of the displacement law, and the same resolution
-the previous six reached: **`pipe` needs its own queue and its own budget.** That
-is specified and **not yet implemented** — the engine currently ships four queues,
-and `pipe` remains disabled until the fifth exists.
+the previous six reached: **`pipe` gets its own queue and its own budget.** That
+queue now ships — `PIPE_VIEWS`, `pipe_budget_per_day` (1.0/day by default, the
+same as the execution queue), its own detector and independently calibrated null,
+carried in the signed bundle and emitted by `score` alongside the others.
+
+The execution and pipe queues share one scoring implementation
+(`_score_graph_queue`) rather than two copies of the same rollup and correction
+logic; they differ only in detector, null and budget. Bundle round-trip is
+bit-identical across all five queues.
 
 *(The `ntds_dump` arm of that run returned 0/0 — no injected instance landed in
 the held-out window — so it measured nothing and is not reported as evidence.

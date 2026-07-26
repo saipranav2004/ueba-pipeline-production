@@ -49,15 +49,23 @@ Pass-the-Hash `8/9`, password spray `6/6`, AS-REP roasting `5/6`, golden ticket
 `4/4`, LSASS dump `4/4`, account manipulation `4/5`, NTDS dump `0/2`
 (NTDS is covered by the execution queue below, not by the relational path).
 
-Three **separately budgeted** queues cover the threat classes the relational
+Four **separately budgeted** queues cover the threat classes the relational
 queue is blind to. Each was measured *inside* that queue first and displaced its
 evidence, so each was given its own budget instead of being dropped:
 
-| queue | threat class | relational engine | this track |
+| queue | threat class | relational engine | this queue |
 |---|---|---|---|
 | execution | NTDS extraction / novel program use | 0/2 | **2/2** @ 0.90 FP/day |
+| pipe | PsExec-class remote execution over SMB | 1/6 | **see below** |
 | NHI schedule | compromised service account | 0/18 | **81.8%** @ 0.31 FP/day |
 | insider rate | insider / credential abuse | 1/9 | **88.9%** @ 0.17 FP/day |
+
+The **pipe** queue asks what a name-list detection cannot: *has this account ever
+used this pipe?* Published named-pipe detections enumerate `psexesvc`,
+`RemCom_communication` and similar — and OPSEC-aware tooling defeats them by
+renaming its pipe to something ordinary (`atsvc`, `winspool`). Both halves are
+novel for an account that has never done service-control work, so both are
+caught.
 
 A fourth threat class — **insider scope abuse**, an authorised account reading a
 share it has never touched — is covered inside the relational queue by the `share`
@@ -176,11 +184,6 @@ comparison harness, and real-telemetry ingestion validation.
 - **No real-world detection-performance validation.** Every recall and
   false-positive figure is measured on a self-generated estate. LANL 2015 is the
   target and `lanl-eval` is ready; the data sits behind a data-use agreement.
-- **Named-pipe lateral movement is detected but not shipped.** The `pipe` view
-  reaches 5/6 standalone on a PsExec corpus, including the OPSEC-renamed variants
-  that defeat name-list detection, but displaces evidence in every existing queue
-  and needs a fifth queue of its own. Specified in
-  [docs/evaluation.md](docs/evaluation.md), not implemented.
 - **Round-the-clock non-human identities** (a poller active every hour) are
   covered by no queue: they have no schedule to deviate from. A burst-based
   inter-arrival (`cadence`) instrument was built for exactly this cohort,

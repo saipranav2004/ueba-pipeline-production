@@ -44,6 +44,15 @@ def _exec_event(user: str, image: str, when: datetime) -> NormalizedEvent:
     )
 
 
+def _pipe_event(user: str, pipe: str, when: datetime) -> NormalizedEvent:
+    return NormalizedEvent(
+        event_time=when, ingest_time=None, channel="Microsoft-Windows-Sysmon/Operational",
+        event_id="17", event_type="sysmon_17", group="process",
+        computer_name="WS-01", outcome=None, keywords=[],
+        fields={"user_norm": user, "pipe_name": rf"\\.\pipe\{pipe}"},
+    )
+
+
 def _logon(user: str, src: str, when: datetime) -> NormalizedEvent:
     return NormalizedEvent(
         event_time=when, ingest_time=None, channel="Security", event_id="4624",
@@ -66,10 +75,14 @@ def _estate() -> list[NormalizedEvent]:
             for user in ("alice", "bob", "carol"):
                 events.append(_exec_event(user, r"C:\Windows\System32\cmd.exe", t))
                 events.append(_logon(user, "ws-01", t + timedelta(minutes=1)))
+                events.append(_pipe_event(user, "srvsvc", t + timedelta(minutes=2)))
     # The anomaly: an account whose only program has ever been cmd.exe reaches for
     # the directory-extraction tool. No new relationship, only a new program.
     events.append(_exec_event("alice", r"C:\Windows\System32\ntdsutil.exe",
                               BASE + timedelta(days=6, hours=3)))
+    # And a pipe no account here has ever served -- the PsExec shape.
+    events.append(_pipe_event("bob", "psexesvc-ws-02-4471",
+                              BASE + timedelta(days=6, hours=4)))
     events.sort(key=lambda e: e.event_time)
     return events
 
@@ -105,6 +118,30 @@ def test_the_cli_printer_renders_an_alert_from_every_queue():
             assert a.entity in line, f"{name} queue line does not name its entity"
             rendered += 1
     assert rendered, "no alert was rendered; the fixture no longer exercises this path"
+
+
+def test_the_pipe_queue_is_scored_separately_from_execution():
+    """The fifth queue must exist as its own list with its own budget.
+
+    `pipe` cannot share either existing queue -- inside the relational queue it
+    cost six headline detections, and inside the execution queue `proc_exec`
+    displaced it from 3/6 to 0/6 -- so a regression that quietly folds it into
+    another queue would undo the measurement that justified it.
+    """
+    engine, test_events = _fitted()
+    queues = engine.score_queues(test_events)
+    assert "pipe" in queues, "the pipe queue is no longer scored"
+    assert "execution" in queues
+    assert queues["pipe"] is not queues["execution"]
+    assert engine.config.pipe_budget_per_day > 0
+    for a in queues["pipe"]:
+        assert a.evidence.startswith("hits=")
+
+
+def test_a_zero_pipe_budget_disables_the_queue_entirely():
+    engine, test_events = _fitted()
+    engine.config.pipe_budget_per_day = 0.0
+    assert "pipe" not in engine.score_queues(test_events)
 
 
 def test_the_execution_queue_is_scored_and_carries_its_own_evidence():

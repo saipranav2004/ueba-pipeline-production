@@ -56,6 +56,13 @@ REMOTE_LOGON_TYPES = {"3", "10"}
 RELATIONAL_VIEWS = frozenset(
     {"user_src", "proc_access", "kerb_ctx", "tgs_enc", "dir_op", "share"})
 EXECUTION_VIEWS = frozenset({"proc_exec"})
+# `pipe` (account -> named pipe) reaches 5/6 standalone on a PsExec corpus,
+# including the OPSEC-renamed variants a name-list detection cannot see. It gets
+# a queue of its own because it displaces evidence in both existing ones: inside
+# the relational queue it costs six headline detections to recover two, and
+# sharing the execution queue with `proc_exec` drops it from 3/6 to 0/6. Seventh
+# measurement of the displacement law, same resolution as the previous six.
+PIPE_VIEWS = frozenset({"pipe"})
 
 
 # Event id -> privileged directory-operation class, for the dir_op view. This is

@@ -87,6 +87,7 @@ from ueba_pipeline.features import build_capability_manifest, observed_entity_wi
 from ueba_pipeline.graph.auth_graph_anomaly import (
     DIR_OP_CLASS,
     EXECUTION_VIEWS,
+    PIPE_VIEWS,
     RELATIONAL_VIEWS,
     AuthGraphAnomalyDetector,
     AuthGraphConfig,
@@ -233,6 +234,10 @@ class EngineConfig:
     # 0.19 FP/day. Choosing the cheapest point that keeps recall would be selection
     # on the estates the figure is reported from.
     execution_budget_per_day: float = 1.0
+    # Named-pipe queue. 1.0/day matches the execution queue and was measured at
+    # 0.82 false-positive entities/day for 3/6 recall on the PsExec corpus;
+    # raising it trades that directly (5/6 at 5/day). Set to 0 to disable.
+    pipe_budget_per_day: float = 1.0
     # How a raw graph statistic becomes a p-value.
     #   "predictive" -- the model's own discrete predictive p-value (Heard &
     #                   Rubin-Delanchy 2016, eq. 2). SHIPPED. No empirical floor,
@@ -261,6 +266,11 @@ class BehavioralEngine:
         default_factory=lambda: AuthGraphAnomalyDetector(
             config=AuthGraphConfig(enabled_views=EXECUTION_VIEWS)))
     _execution_nulls: dict[str, EmpiricalPValue] = field(default_factory=dict)
+    # Named-pipe queue's own detector and null, calibrated independently.
+    pipe_graph: AuthGraphAnomalyDetector = field(
+        default_factory=lambda: AuthGraphAnomalyDetector(
+            config=AuthGraphConfig(enabled_views=PIPE_VIEWS)))
+    _pipe_nulls: dict[str, EmpiricalPValue] = field(default_factory=dict)
     manifest: object = None
     # One frozen benign null PER graph view, so each relationship type is scored
     # against its own baseline and cannot pollute the others.
@@ -296,7 +306,9 @@ class BehavioralEngine:
         # is calibrated independently of the relational views.
         self._execution_nulls, exec_stats = self._fit_graph(
             graph_events, contaminated, graph=self.execution_graph)
-        self.view_stats = {**self.view_stats, **exec_stats}
+        self._pipe_nulls, pipe_stats = self._fit_graph(
+            graph_events, contaminated, graph=self.pipe_graph)
+        self.view_stats = {**self.view_stats, **exec_stats, **pipe_stats}
         self._fit_tracks(events)
         return self
 
@@ -425,22 +437,52 @@ class BehavioralEngine:
         because measurement showed it displaces Kerberos evidence there while
         solving NTDS extraction here.
         """
-        if not self._execution_nulls:
+        return self._score_graph_queue(events, self.execution_graph,
+                                       self._execution_nulls,
+                                       self.config.execution_budget_per_day)
+
+    def score_pipe(self, events: list) -> list[EntityRisk]:
+        """Rank identities by novel named-pipe use. SEPARATE queue and budget.
+
+        A named pipe is how PsExec-class tooling and Cobalt Strike beacons carry
+        remote execution, and the published detections for it are lists of pipe
+        names -- which OPSEC-aware tooling defeats by renaming its pipe to
+        something ordinary (`atsvc`, `winspool`). This queue asks the question a
+        name list cannot: has THIS ACCOUNT ever used this pipe? Measured 5/6
+        standalone on the PsExec corpus, catching the renamed half as readily as
+        the tool-shaped half.
+
+        Its own queue for the reason every other separate queue exists: measured
+        inside the relational queue it cost six headline detections to recover
+        two, and sharing the execution queue with `proc_exec` dropped it from 3/6
+        to 0/6.
+        """
+        return self._score_graph_queue(events, self.pipe_graph, self._pipe_nulls,
+                                       self.config.pipe_budget_per_day)
+
+    def _score_graph_queue(self, events: list, graph, nulls,
+                           budget_per_day: float) -> list[EntityRisk]:
+        """One implementation of a separately-budgeted relational queue.
+
+        The execution and pipe queues differ only in which detector, null and
+        budget they use, so they share this body -- and therefore share one set of
+        bugs rather than two copies of the same rollup and correction logic.
+        """
+        if not nulls:
             return []
         observed = observed_entity_windows(events, self.config.window_hours)
         sessions = SessionResolver().fit(events, _norm)
         cell: dict[tuple[str, datetime], WindowDetection] = {}
-        self.execution_graph.freeze()   # see the note in score()
+        graph.freeze()   # see the note in score()
         for e in _time_sorted_graph_events(events):
             self._score_graph_event(e, cell, absorb=False, sessions=sessions,
-                                    graph=self.execution_graph,
-                                    nulls=self._execution_nulls)
+                                    graph=graph, nulls=nulls)
         detections = [d for d in cell.values() if d.graph_p < 1.0]
         hours = [d.hour for d in detections] or [h for _, h in observed]
         days = ((max(hours) - min(hours)).total_seconds() / 86400.0) if hours else 1.0
         budget = self.config.alert_budget_per_day
         try:
-            self.config.alert_budget_per_day = self.config.execution_budget_per_day
+            self.config.alert_budget_per_day = budget_per_day
             return self._rollup(detections, observed, observed_days=max(days, 1.0))
         finally:
             self.config.alert_budget_per_day = budget
@@ -465,6 +507,8 @@ class BehavioralEngine:
         out: dict[str, list] = {}
         if self.config.execution_budget_per_day > 0 and self._execution_nulls:
             out["execution"] = self.score_execution(events)
+        if self.config.pipe_budget_per_day > 0 and self._pipe_nulls:
+            out["pipe"] = self.score_pipe(events)
         for name, budget in (("nhi", self.config.nhi_budget_per_day),
                              ("insider", self.config.insider_budget_per_day)):
             track = getattr(self, f"{name}_track", None)
