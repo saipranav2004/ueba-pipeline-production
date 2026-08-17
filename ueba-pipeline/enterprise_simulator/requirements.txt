@@ -1,9 +1,0 @@
-# enterprise_simulator — Python Standard Library only
-# No pip install required. Requires Python 3.9+
-#
-# All modules used:
-#   argparse, collections, csv, dataclasses, datetime,
-#   hashlib, json, os, random, sys, time, typing, uuid
-#
-# To verify your Python version:
-#   python3 --version  # must be 3.9 or higher
